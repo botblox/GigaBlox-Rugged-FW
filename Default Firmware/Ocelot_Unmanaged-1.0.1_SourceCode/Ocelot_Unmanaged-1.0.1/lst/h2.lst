@@ -1,0 +1,1881 @@
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE H2
+OBJECT MODULE PLACED IN ..\obj\h2.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\switch\h2.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbond
+                    -;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_api
+                    -\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src\
+                    -eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PRI
+                    -NT(..\lst\h2.lst) TABS(2) OBJECT(..\obj\h2.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          
+  26          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  27          
+  28          #include "vtss_common_os.h"
+  29          #include "sysutil.h"
+  30          #include "vtss_api_base_regs.h"
+  31          #include "h2io.h"
+  32          #include "h2.h"
+  33          #include "timer.h"
+  34          #include "main.h"
+  35          #include "phydrv.h"
+  36          #include "phytsk.h"
+  37          #include "phymap.h"
+  38          #include "h2flowc.h"
+  39          #include "misc1.h"
+  40          #include "misc2.h"
+  41          #include "hwport.h"
+  42          #include "h2mactab.h"
+  43          #include "h2vlan.h"
+  44          #include "h2packet.h"
+  45          
+  46          #if TRANSIT_LAG
+              #include "h2aggr.h"
+              #endif
+  49          #if TRANSIT_LACP
+              #include "vtss_lacp.h"
+              #endif
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 2   
+
+  52          
+  53          
+  54          #define VTSS_COMMON_ASSERT(EXPR) /* Go away */
+  55          
+  56          
+  57          #ifndef NDEBUG
+              #include "txt.h"
+              #endif /* NDEBUG */
+  60          #include "h2sdcfg.h"
+  61          #include "print.h"
+  62          #include "ledtsk.h"
+  63          #if MAC_TO_MEDIA
+  64          #include "h2pcs1g.h"
+  65          #endif
+  66          
+  67          /*****************************************************************************
+  68           *
+  69           *
+  70           * Defines
+  71           *
+  72           *
+  73           *
+  74           ****************************************************************************/
+  75          #if defined(H2_DEBUG_ENABLE)
+              #include "print.h"
+              #endif /* H2_DEBUG_ENABLE */
+  78          
+  79          /*****************************************************************************
+  80           *
+  81           *
+  82           * Typedefs and enums
+  83           *
+  84           *
+  85           *
+  86           ****************************************************************************/
+  87          
+  88          enum {
+  89              VTSS_PGID_DEST_MASK_START   =   0,
+  90              VTSS_PGID_AGGR_MASK_START   =  64,
+  91              VTSS_PGID_SOURCE_MASK_START =  80
+  92          };
+  93          
+  94          /*****************************************************************************
+  95           *
+  96           *
+  97           * Prototypes for local functions
+  98           *
+  99           *
+ 100           *
+ 101           ****************************************************************************/
+ 102          #if TRANSIT_LAG
+              typedef struct {
+                  port_bit_mask_t h2_current_aggr_groups[TOTAL_AGGRS];
+              } h2_current_state_t;
+              #endif 
+ 107          /*****************************************************************************
+ 108           *
+ 109           *
+ 110           * Local data
+ 111           *
+ 112           *
+ 113           *
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 3   
+
+ 114           ****************************************************************************/
+ 115          #if TRANSIT_LAG
+              static h2_current_state_t   h2_current_state;
+              #endif
+ 118          
+ 119          /*****************************************************************************
+ 120           *
+ 121           *
+ 122           * Local functions
+ 123           *
+ 124           *
+ 125           *
+ 126           ****************************************************************************/
+ 127          static void _vtss_update_src_mask(port_bit_mask_t link_mask);
+ 128          static void _port_reset(vtss_cport_no_t chip_port, uchar link_mode);
+ 129          static void _setup_mac(vtss_cport_no_t chip_port, uchar link_mode);
+ 130          
+ 131          #if defined(VTSS_ARCH_LUTON26)
+              /**
+               * Determines ingress forwarding is allowed or not.
+               *
+               * In unmanaged code base, this function always returns TRUE. In managed code,
+               * the return value depends on the result from spanning-tree and 802.1x.
+               */
+              static BOOL _ingr_forwarding (vtss_cport_no_t  sport_no)
+              {
+                  sport_no = sport_no; /* avoid compiler warning */
+                  return TRUE;
+              }
+              #endif // LUTON26_L10 || LUTON26_L16 || LUTON26_L25
+ 144          
+ 145          /**
+ 146           * Sets up how to access the switch chip.
+ 147           */
+ 148          static void _h2_setup_cpu_if (void) small
+ 149          {
+ 150   1      }
+ 151          
+ 152          #if defined(VTSS_ARCH_LUTON26)
+              static void _l26_buf_conf_set(void)
+              {
+                  ulong port_no, q, dp, i = 0;
+                  ulong buf_q_rsrv_i, buf_q_rsrv_e, ref_q_rsrv_i, ref_q_rsrv_e, buf_prio_shr_i[8], buf_prio_shr_e[8], re
+             -f_prio_shr_i[8], ref_prio_shr_e[8];
+                  ulong buf_p_rsrv_i, buf_p_rsrv_e, ref_p_rsrv_i, ref_p_rsrv_e, buf_col_shr_i, buf_col_shr_e, ref_col_sh
+             -r_i, ref_col_shr_e;
+                  ulong prio_mem_rsrv, prio_ref_rsrv, mem, ref, value;
+              
+                  /*  SYS::RES_CFG : 1024 watermarks for 512 kB shared buffer, unit is 48 byte */
+                  /*  Is divided into 4 resource consumptions, ingress and egress memory (BUF) and frame reference (REF)
+             - blocks */
+              
+                  /* BUF_xxx_Ingress starts @ offset 0   */
+                  /* REF_xxx_Ingress starts @ offset 256 */
+                  /* BUF_xxx_Egress  starts @ offset 512 */
+                  /* BUF_xxx_Egress  starts @ offset 768 */
+                  /* xxx = q_rsrv, prio_shr, p_rsrv, col_shr */
+              
+                  /* Queue reserved (q_rsrv) : starts @ offset 0 within in each BUF and REF */
+                  /* Prio shared (prio_shr)  : starts @ offset 216 within in each BUF and REF */
+                  /* Port reserved (p_rsrv)  : starts @ offset 224 within in each BUF and REF */
+                  /* Colour shared (col_shr) : starts @ offset 254 within in each BUF and REF */
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 4   
+
+              
+                  /* WM values  */
+                  buf_q_rsrv_i = 10;     /* 500/48 Guarantees reception of at least one frame to all queues  */
+                  ref_q_rsrv_i = 8;      /* 4 frames can be pending at each ingress port              */
+                  buf_q_rsrv_e = 4;      /* 200/48 Guarantees all priorities to non-congested traffic stream */
+                  ref_q_rsrv_e = 8;      /* 4 frames can be pending to each egress port               */
+              
+                  prio_mem_rsrv = 7000;
+                  prio_ref_rsrv = 50;
+              
+                  /* Subtract the reserved amount from the total amount */
+                  mem = 512000-(MAX_PORT + 1)*(0+10000+8*500+8*200);
+                  ref = 5500-(MAX_PORT + 1)*(20+20+8*8+8*8);
+              
+              #ifndef VTSS_PRIOS
+              #define VTSS_PRIOS 8
+              #endif
+              
+                  for (q = 0; q < VTSS_PRIOS; q++) {
+                      value = (mem-(7-q)*prio_mem_rsrv)/48;
+                      if (value >= 1024) {
+                          value = 1024 + value/16;
+                      }
+                      buf_prio_shr_i[q] = value;
+                      ref_prio_shr_i[q] = ref-(7-q)*prio_ref_rsrv;
+                      value = (mem-(7-q)*prio_mem_rsrv)/48;
+                      if (value >= 1024) {
+                          value = 1024 + value/16;
+                      }
+                      buf_prio_shr_e[q] = value;
+                      ref_prio_shr_e[q] = ref-(7-q)*prio_ref_rsrv;
+                  }
+              
+                  buf_p_rsrv_i = 0;        /* No quaranteed extra space for ingress ports         */
+                  ref_p_rsrv_i = 20;       /* 20 extra frames can be pending shared between prios */
+                  buf_p_rsrv_e = 10000/48; /* 10kB reserved for each egress port                  */
+                  ref_p_rsrv_e = 20;       /* 20 extra frames can be pending shared between prios */
+              
+                  buf_col_shr_i = 0x7FF; /* WM max - never reached */
+                  ref_col_shr_i = 0x7FF; /* WM max - never reached */
+                  buf_col_shr_e = 0x7FF; /* WM max - never reached */
+                  ref_col_shr_e = 0x7FF; /* WM max - never reached */
+              
+                  i = 0;
+                  do { /* Reset default WM */
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(i), 0);
+                      i++;
+                  } while (i<1024);
+              
+                  /* Configure reserved space for all QoS classes per port */
+                  for (port_no = MIN_PORT; port_no <= MAX_PORT; port_no++) {
+                      for (q = 0; q < VTSS_PRIOS; q++) {
+                          H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no * VTSS_PRIOS + q + 0),   buf_q_rsrv_i);
+                          H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no * VTSS_PRIOS + q + 256), ref_q_rsrv_i);
+                          H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no * VTSS_PRIOS + q + 512), buf_q_rsrv_e);
+                          H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no * VTSS_PRIOS + q + 768), ref_q_rsrv_e);
+                      }
+                  }
+              
+                  /* Configure shared space for all QoS classes */
+                  for (q = 0; q < VTSS_PRIOS; q++) {
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG((q + 216 + 0)),   buf_prio_shr_i[q]);
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 5   
+
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG((q + 216 + 256)), ref_prio_shr_i[q]);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG((q + 216 + 512)), buf_prio_shr_e[q]);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG((q + 216 + 768)), ref_prio_shr_e[q]);
+                      H2_READ(VTSS_SYS_RES_CTRL_RES_CFG((q + 216 + 0)),   dp);
+                  }
+              
+                  /* Configure reserved space for all ports */
+                  for (port_no = MIN_PORT; port_no <= MAX_PORT; port_no++) {
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no + 224 +   0), buf_p_rsrv_i);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no + 224 + 256), ref_p_rsrv_i);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no + 224 + 512), buf_p_rsrv_e);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(port_no + 224 + 768), ref_p_rsrv_e);
+                  }
+              
+                  /* Configure shared space for  both DP levels (green:0 yellow:1) */
+                  for (dp = 0; dp < 2; dp++) {
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(dp + 254 +   0), buf_col_shr_i);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(dp + 254 + 256), ref_col_shr_i);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(dp + 254 + 512), buf_col_shr_e);
+                      H2_WRITE(VTSS_SYS_RES_CTRL_RES_CFG(dp + 254 + 768), ref_col_shr_e);
+                  }
+                  return;
+              }
+              #elif defined(VTSS_ARCH_OCELOT)
+ 259          #define MULTIPLIER_BIT 256 
+ 260          static u16 wm_enc(u16 value)
+ 261          {
+ 262   1          if (value >= MULTIPLIER_BIT) {
+ 263   2              return MULTIPLIER_BIT + value / 16;
+ 264   2          }
+ 265   1          return value;
+ 266   1      }
+ 267          
+ 268          #define FERRET_BUFFER_MEMORY 229380
+ 269          #define FERRET_BUFFER_REFERENCE 1911
+ 270          #define FERRET_BUFFER_CELL_SZ 60
+ 271          #ifndef VTSS_PRIOS
+ 272          #define VTSS_PRIOS 8
+ 273          #endif
+ 274          
+ 275          static void _ferret_buf_conf_set(void)
+ 276          {
+ 277   1          int q;
+ 278   1          ulong port_no, port, dp;
+ 279   1          ulong buf_q_rsrv_i, buf_q_rsrv_e, ref_q_rsrv_i, ref_q_rsrv_e, buf_prio_shr_i[8], buf_prio_shr_e[8], re
+             -f_prio_shr_i[8], ref_prio_shr_e[8];
+ 280   1          ulong buf_p_rsrv_i, buf_p_rsrv_e, ref_p_rsrv_i, ref_p_rsrv_e, buf_col_shr_i, buf_col_shr_e, ref_col_sh
+             -r_i, ref_col_shr_e;
+ 281   1          ulong buf_prio_rsrv, ref_prio_rsrv, guaranteed, q_rsrv_mask, prio_mem, prio_ref, oversubscription_fact
+             -or;
+ 282   1          u8 prio_strict,prios=8;
+ 283   1      
+ 284   1          /* This mode to be configurable by user somehow */
+ 285   1          /* Mode 0: Strict priorities. Higher priorities have right to use all shared before lower */
+ 286   1          /* Mode 1: Classes with equal memory rights */
+ 287   1          ulong shr_mode = 0;
+ 288   1      
+ 289   1          /* BZ#21592 - 2 to All random frame size (64-9600 bytes).
+ 290   1           *
+ 291   1           * Squeeze a little more out of the buffer resource.
+ 292   1           *
+ 293   1           * In Ferret unmanaged software, only qos 0/7 being in use and
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 6   
+
+ 294   1           * qos-7 only has a small amount of memory as a source on the cpu port only
+ 295   1           */
+ 296   1          BOOL is_squeeze_buffer_resource = TRUE;
+ 297   1      
+ 298   1          /***********************/
+ 299   1          /* Settings for mode 0 */
+ 300   1          /***********************/
+ 301   1          /* SYS::RES_CFG : 1024 watermarks for 1024000 byte shared buffer, unit is 60 byte */
+ 302   1          /* Is divided into 4 resource consumptions, ingress and egress memory (BUF) and ingress and egress fra
+             -me reference (REF) blocks */
+ 303   1          /* Queue reserved (q_rsrv) : starts at offset 0 within in each BUF and REF   */
+ 304   1          /* Prio shared (prio_shr)  : starts at offset 216 within in each BUF and REF */
+ 305   1          /* Port reserved (p_rsrv)  : starts at offset 224 within in each BUF and REF */
+ 306   1          /* Colour shared (col_shr) : starts at offset 254 within in each BUF and REF */
+ 307   1      
+ 308   1          /* Buffer values are in BYTES */
+ 309   1          buf_q_rsrv_i = 3000;    /* Guarantees at least 1 MTU  */
+ 310   1          buf_p_rsrv_i = 0;       /* No additional ingress guarantees   */
+ 311   1          buf_q_rsrv_e = 0;       /* Guarantees all QoS classes some space */
+ 312   1          buf_p_rsrv_e = 3000;    /* Guarantees a space to the egress ports */
+ 313   1          buf_col_shr_i = FERRET_BUFFER_MEMORY; /* Green color - disabled for now */
+ 314   1          buf_col_shr_e = FERRET_BUFFER_MEMORY; /* Green color - disabled for now */
+ 315   1          buf_prio_rsrv = 4000;  /* In the shared area, each priority is cut off 12kB before the others. Yellow 
+             -colour is cut of 12kb before lowest */
+ 316   1          prio_strict   = TRUE;   /* The priorities are treated strict in the shared memory */
+ 317   1      
+ 318   1          /* Reference values in NUMBER of FRAMES */
+ 319   1          ref_q_rsrv_e = 8;     /* Number of frames that can be pending at each egress queue   */
+ 320   1          ref_q_rsrv_i = 8;     /* Number of frames that can be pending at each ingress queue  */
+ 321   1          ref_p_rsrv_e = 20;    /* Number of frames that can be pending shared between the QoS classes at egress
+             - */
+ 322   1          ref_p_rsrv_i = 20;     /* Number of frames that can be pending shared between the QoS classes at ingre
+             -ss */
+ 323   1          ref_col_shr_i = FERRET_BUFFER_REFERENCE; /* Green color - disabled for now */
+ 324   1          ref_col_shr_e = FERRET_BUFFER_REFERENCE; /* Green color - disabled for now */
+ 325   1          ref_prio_rsrv = 50;   /* Number of frames that can be pending for each class */
+ 326   1      
+ 327   1          /* The memory is oversubsrcribed by this factor (factor 1 = 100) */
+ 328   1          /* Oversubscription is possible (in some degree) because it's rare that all ports use their reserved s
+             -pace at the same time */
+ 329   1          oversubscription_factor = 200; /* No oversubscription */
+ 330   1      
+ 331   1      
+ 332   1          /****** User configured mode changes *************/
+ 333   1      
+ 334   1          /************/
+ 335   1          /* Mode 1   */
+ 336   1          /************/
+ 337   1          if (shr_mode == 1) {
+ 338   2              prio_strict     = FALSE; /* Each priority has its own share */
+ 339   2              buf_prio_rsrv   = 30000; /* 30kB set aside to each active priority */
+ 340   2              buf_p_rsrv_i    = 0;     /* No port reservation allowed in this mode */
+ 341   2              buf_p_rsrv_e    = 0;
+ 342   2              ref_prio_rsrv   = 200;  /* 200 frames set aside to each active priority */
+ 343   2              ref_p_rsrv_i    = 0;    /* No port reservation allowed in this mode */
+ 344   2              ref_p_rsrv_e    = 0;
+ 345   2              oversubscription_factor = 200; /* Assume only half of the reserved memory is in use at any time */
+ 346   2          }
+ 347   1          /*************************************************/
+ 348   1      
+ 349   1      
+ 350   1          /* Note, the shared reserved space (buf_prio_shr_i, ref_prio_shr_i, buf_prio_shr_e, ref_prio_shr_e) is
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 7   
+
+             - calulated based on above */
+ 351   1      
+ 352   1          /* The number of supported queues is given through the state structure                           */
+ 353   1          /* The supported queues (lowest to higest) are givin reserved buffer space as specified above.   */
+ 354   1          /* Frames in remaining queues (if any) are not getting any reserved space - but are allowed in the sys
+             -tem.*/
+ 355   1          if (is_squeeze_buffer_resource) {
+ 356   2              q_rsrv_mask = 0x1 | (1 << PACKET_XTR_QU_BPDU_LLDP);
+ 357   2          } else {
+ 358   2              q_rsrv_mask = 0xff >> (8 - prios);
+ 359   2          }
+ 360   1      
+ 361   1      
+ 362   1          /* **************************************************  */
+ 363   1          /* BELOW, everything is calculated based on the above. */
+ 364   1          /* **************************************************  */
+ 365   1      
+ 366   1          /* Find the amount of guaranteeed space per port */
+ 367   1          guaranteed = buf_p_rsrv_i+buf_p_rsrv_e;
+ 368   1          for (q=0; q<VTSS_PRIOS; q++) {
+ 369   2              if (q_rsrv_mask & (1<<q))
+ 370   2                  guaranteed+=(buf_q_rsrv_i+buf_q_rsrv_e);
+ 371   2          }
+ 372   1      
+ 373   1          prio_mem = FERRET_BUFFER_MEMORY - (MAX_PORT+1)*guaranteed*100/oversubscription_factor;
+ 374   1      
+ 375   1          /* Find the amount of guaranteeed frame references */
+ 376   1          guaranteed = ref_p_rsrv_i+ref_p_rsrv_e;
+ 377   1          for (q=0; q<VTSS_PRIOS; q++) {
+ 378   2              if (q_rsrv_mask & (1<<q)) {
+ 379   3                  guaranteed+=(ref_q_rsrv_i+ref_q_rsrv_e);
+ 380   3              }
+ 381   2          }
+ 382   1          prio_ref = FERRET_BUFFER_REFERENCE - (MAX_PORT+1)*guaranteed*100/oversubscription_factor;
+ 383   1      
+ 384   1          /* Configuring the prio watermarks */
+ 385   1          if (prio_strict) {
+ 386   2              for (q = prios-1; q>=0; q--) {
+ 387   3                  if (q_rsrv_mask & (1<<q)) {
+ 388   4                      buf_prio_shr_i[q] = prio_mem;
+ 389   4                      ref_prio_shr_i[q] = prio_ref;
+ 390   4                      buf_prio_shr_e[q] = prio_mem;
+ 391   4                      ref_prio_shr_e[q] = prio_ref;
+ 392   4      
+ 393   4                      prio_mem -= buf_prio_rsrv;
+ 394   4                      prio_ref -= ref_prio_rsrv;
+ 395   4                  } else {
+ 396   4                      buf_prio_shr_i[q] = 0;
+ 397   4                      ref_prio_shr_i[q] = 0;
+ 398   4                      buf_prio_shr_e[q] = 0;
+ 399   4                      ref_prio_shr_e[q] = 0;
+ 400   4                  }
+ 401   3              }
+ 402   2              buf_col_shr_i = prio_mem - buf_prio_rsrv;
+ 403   2              buf_col_shr_e = prio_mem - buf_prio_rsrv;
+ 404   2              ref_col_shr_i = prio_ref - ref_prio_rsrv;
+ 405   2              ref_col_shr_e = prio_ref - ref_prio_rsrv;
+ 406   2          } else {
+ 407   2              /* Shared area per prio */
+ 408   2              for (q=0; q<prios; q++) {
+ 409   3                  buf_prio_shr_i[q] = buf_prio_rsrv;
+ 410   3                  ref_prio_shr_i[q] = ref_prio_rsrv;
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 8   
+
+ 411   3                  buf_prio_shr_e[q] = buf_prio_rsrv;
+ 412   3                  ref_prio_shr_e[q] = ref_prio_rsrv;
+ 413   3                  prio_mem -= buf_prio_rsrv;
+ 414   3                  prio_ref -= ref_prio_rsrv;
+ 415   3              }
+ 416   2              buf_col_shr_i = prio_mem;
+ 417   2              buf_col_shr_e = prio_mem;
+ 418   2              ref_col_shr_i = prio_ref;
+ 419   2              ref_col_shr_e = prio_ref;
+ 420   2              /* Use per priority shared areas */
+ 421   2              H2_WRITE(VTSS_QSYS_RES_QOS_ADV_RES_QOS_MODE, 0xff);
+ 422   2          }
+ 423   1      
+ 424   1      
+ 425   1          /* Port and QoS class reservation watermarks (Q_RSRV):
+ 426   1             Configure reserved space for all QoS classes per port */
+ 427   1          for (port_no = 0; port_no <= MAX_PORT; port_no++) {
+ 428   2              if (port_no == MAX_PORT) {
+ 429   3                  port = CPU_CHIP_PORT;
+ 430   3              } else {
+ 431   3                  port = iport2cport(port_no);
+ 432   3              }
+ 433   2              for (q = 0; q < VTSS_PRIOS; q++) {
+ 434   3                  if (q_rsrv_mask&(1<<q)
+ 435   3                      /* && (is_squeeze_buffer_resource && (q==0 || q==7 && port==CPU_CHIP_PORT)) */) {
+ 436   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 0),   wm_enc(buf_q_rsrv_i / FE
+             -RRET_BUFFER_CELL_SZ));
+ 437   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 256), wm_enc(ref_q_rsrv_i));
+ 438   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 512), wm_enc(buf_q_rsrv_e / FE
+             -RRET_BUFFER_CELL_SZ));
+ 439   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 768), wm_enc(ref_q_rsrv_e));
+ 440   4                  } else {
+ 441   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 0),   0);
+ 442   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 256), 0);
+ 443   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 512), 0);
+ 444   4                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port * VTSS_PRIOS + q + 768), 0);
+ 445   4                  }
+ 446   3              }
+ 447   2          }
+ 448   1      
+ 449   1          /* QoS class sharing watermarks (PRIO_SHR):
+ 450   1             Configure shared space for all QoS classes */
+ 451   1          for (q = 0; q < VTSS_PRIOS; q++) {
+ 452   2              /* Save initial encoded value of shared area for later use by WRED */
+ 453   2              //vtss_state->port.buf_prio_shr[q] = wm_enc(buf_prio_shr_e[q] / FERRET_BUFFER_CELL_SZ);
+ 454   2      
+ 455   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG((q + 216 + 0)),   wm_enc(buf_prio_shr_i[q] / FERRET_BUFFER_CEL
+             -L_SZ));
+ 456   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG((q + 216 + 256)), wm_enc(ref_prio_shr_i[q]));
+ 457   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG((q + 216 + 512)), wm_enc(buf_prio_shr_e[q] / FERRET_BUFFER_CEL
+             -L_SZ));
+ 458   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG((q + 216 + 768)), wm_enc(ref_prio_shr_e[q]));
+ 459   2          }
+ 460   1      
+ 461   1          /* Port reservation watermarks (P_RSRV):
+ 462   1             Configure reserved space for all ports */
+ 463   1          for (port_no = 0; port_no <= MAX_PORT; port_no++) {
+ 464   2              if (port_no == MAX_PORT) {
+ 465   3                  port = CPU_CHIP_PORT;
+ 466   3              } else {
+ 467   3                  port = iport2cport(port_no);
+ 468   3              }
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 9   
+
+ 469   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port + 224 +   0), wm_enc(buf_p_rsrv_i / FERRET_BUFFER_CELL_SZ
+             -));
+ 470   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port + 224 + 256), wm_enc(ref_p_rsrv_i));
+ 471   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port + 224 + 512), wm_enc(buf_p_rsrv_e / FERRET_BUFFER_CELL_SZ
+             -));
+ 472   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(port + 224 + 768), wm_enc(ref_p_rsrv_e));
+ 473   2          }
+ 474   1      
+ 475   1          /* Color sharing watermarks (COL_SHR):
+ 476   1             Configure shared space for both DP levels.
+ 477   1             In this context dp:0 is yellow and dp:1 is green */
+ 478   1          for (dp = 0; dp < 2; dp++) {
+ 479   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(dp + 254 +   0), wm_enc(buf_col_shr_i / FERRET_BUFFER_CELL_SZ)
+             -);
+ 480   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(dp + 254 + 256), wm_enc(ref_col_shr_i));
+ 481   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(dp + 254 + 512), wm_enc(buf_col_shr_e / FERRET_BUFFER_CELL_SZ)
+             -);
+ 482   2              H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(dp + 254 + 768), wm_enc(ref_col_shr_e));
+ 483   2              // Green watermark should match the highest priority watermark. Otherwise the will be no
+ 484   2              //// strict shared space per qos level
+ 485   2              buf_col_shr_i=buf_col_shr_e=buf_prio_shr_i[7];
+ 486   2              ref_col_shr_i=ref_col_shr_e=ref_prio_shr_i[7];
+ 487   2          }
+ 488   1      }
+ 489          #endif //#if defined(VTSS_ARCH_LUTON26)
+ 490          
+ 491          #if defined(VTSS_ARCH_OCELOT)
+ 492          static void _ferret_port_reset(vtss_cport_no_t chip_port, uchar link_mode)
+ 493          {
+ 494   1          /* Refer to Ferret chip specification: Port Reset Procedure
+ 495   1           * When changing a switch port¡¦s mode of operation or restarting a switch port, the following port re
+             -set
+ 496   1           * procedure must be followed:
+ 497   1           *
+ 498   1           * 1. Disable the MAC frame reception in the switch port.
+ 499   1           *      DEV::MAC_ENA_CFG.RX_ENA = 0
+ 500   1           * 2. Disable traffic being sent to or from the switch port.
+ 501   1           *      QSYS:PORT:SWITCH_PORT_MODE_ENA = 0
+ 502   1           * 3. Disable shaping to speed up flushing of frames
+ 503   1           *      QSYS::PORT_MODE.DEQUEUE_DIS = 1
+ 504   1           * 4. Wait at least the time it takes to receive a frame of maximum length at the port.
+ 505   1           *      Worst-case delays for 10 kilobyte jumbo frames are:
+ 506   1           *      8 ms on a 10M port
+ 507   1           *      800 £gs on a 100M port
+ 508   1           *      80 £gs on a 1G port
+ 509   1           *      32 £gs on a 2.5G port
+ 510   1           * 5. Disable HDX backpressure.
+ 511   1           *      SYS::FRONT_PORT_MODE.HDX_MODE = 0
+ 512   1           * 6. Flush the queues associated with the port.
+ 513   1           *      REW:PORT:PORT_CFG.FLUSH_ENA = 1
+ 514   1           * 7. Enable dequeuing from the egress queues.
+ 515   1           *      QSYS::PORT_MODE.DEQUEUE_DIS = 0
+ 516   1           * 8. Wait until flushing is complete.
+ 517   1           *      QSYS:PORT:SW_STATUS.EQ_AVAIL must return 0
+ 518   1           * 9. Reset the switch port by setting the following reset bits in CLOCK_CFG:
+ 519   1           *      DEV::CLOCK_CFG.MAC_TX_RST = 1
+ 520   1           *      DEV::CLOCK_CFG.MAC_RX_RST = 1
+ 521   1           *      DEV::CLOCK_CFG.PORT_RST = 1
+ 522   1           * 10. Clear flushing again.
+ 523   1           *      REW:PORT:PORT_CFG.FLUSH_ENA = 0
+ 524   1           * 11. Set up the switch port to the new mode of operation. Keep the reset bits in CLOCK_CFG set.
+ 525   1           * 12. Release the switch port from reset by clearing the reset bits in CLOCK_CFG.
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 10  
+
+ 526   1           */
+ 527   1      
+ 528   1          ulong reg_val, retry_cnt = 100;
+ 529   1      
+ 530   1          /* Select the link speed. Refer to chip sepecification: VTSS_DEV_PORT_MODE_CLOCK_CFG . LINK_SPEED
+ 531   1           * 0: No link
+ 532   1           * 1: 1000/2500 Mbps
+ 533   1           * 2: 100 Mbps
+ 534   1           * 3: 10 Mbps
+ 535   1           */
+ 536   1          u8 speed = (link_mode & LINK_MODE_SPEED_MASK);
+ 537   1          u8 reg_speed_val = (speed == LINK_MODE_SPEED_1000 || speed == LINK_MODE_SPEED_2500) ? 1 :
+ 538   1                             (speed == LINK_MODE_SPEED_100) ? 2 :
+ 539   1                             (speed == LINK_MODE_SPEED_10) ? 3 : 0;
+ 540   1      
+ 541   1          /* 1. Disable the MAC frame reception in the switch port.
+ 542   1           *      DEV::MAC_ENA_CFG.RX_ENA = 0
+ 543   1           */
+ 544   1          H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_ENA_CFG(VTSS_TO_DEV(chip_port)),
+ 546   1                          VTSS_F_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_RX_ENA(0),
+ 546   1                          VTSS_M_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_RX_ENA);
+ 547   1      
+ 548   1          /* 2. Disable traffic being sent to or from the switch port.
+ 549   1           *      QSYS:PORT:SWITCH_PORT_MODE_ENA = 0
+ 550   1           */
+ 551   1          H2_WRITE_MASKED(VTSS_QSYS_SYSTEM_SWITCH_PORT_MODE(chip_port),
+ 553   1                          VTSS_F_QSYS_SYSTEM_SWITCH_PORT_MODE_PORT_ENA(0),
+ 553   1                          VTSS_M_QSYS_SYSTEM_SWITCH_PORT_MODE_PORT_ENA);
+ 554   1      
+ 555   1          /* 3. Disable shaping to speed up flushing of frames
+ 556   1           *      QSYS::PORT_MODE.DEQUEUE_DIS = 1
+ 557   1           */
+ 558   1          H2_WRITE_MASKED(VTSS_QSYS_SYSTEM_PORT_MODE(chip_port),
+ 560   1                          VTSS_F_QSYS_SYSTEM_PORT_MODE_DEQUEUE_DIS(1),
+ 560   1                          VTSS_M_QSYS_SYSTEM_PORT_MODE_DEQUEUE_DIS);
+ 561   1      
+ 562   1          /* 4. Wait at least the time it takes to receive a frame of maximum length at the port.
+ 563   1          /*      Worst-case delays for 10 kilobyte jumbo frames are:
+ 564   1           *      8 ms on a 10M port
+ 565   1           *      800 £gs on a 100M port
+ 566   1           *      80 £gs on a 1G port
+ 567   1           *      32 £gs on a 2.5G port
+ 568   1           */
+ 569   1          delay_1(10);
+ 570   1      
+ 571   1          /* 5. Disable HDX backpressure.
+ 572   1           *      SYS::FRONT_PORT_MODE.HDX_MODE = 0
+ 573   1           */
+ 574   1          H2_WRITE_MASKED(VTSS_SYS_SYSTEM_FRONT_PORT_MODE(chip_port),
+ 576   1                          VTSS_F_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE(0),
+ 576   1                          VTSS_M_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE);
+ 577   1      
+ 578   1          /* 6. Flush the queues associated with the port.
+ 579   1           *      REW:PORT:PORT_CFG.FLUSH_ENA = 1
+ 580   1           */
+ 581   1          H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+ 583   1                          VTSS_F_REW_PORT_PORT_CFG_FLUSH_ENA(1),
+ 583   1                          VTSS_M_REW_PORT_PORT_CFG_FLUSH_ENA);
+ 584   1      
+ 585   1          /* 7. Enable dequeuing from the egress queues.
+ 586   1           *      QSYS::PORT_MODE.DEQUEUE_DIS = 0
+ 587   1           */
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 11  
+
+ 588   1          H2_WRITE_MASKED(VTSS_QSYS_SYSTEM_PORT_MODE(chip_port),
+ 590   1                          VTSS_F_QSYS_SYSTEM_PORT_MODE_DEQUEUE_DIS(0),
+ 590   1                          VTSS_M_QSYS_SYSTEM_PORT_MODE_DEQUEUE_DIS);
+ 591   1      
+ 592   1          /* 8. Wait until flushing is complete.
+ 593   1          *      QSYS:PORT:SW_STATUS.EQ_AVAIL must return 0
+ 594   1           */
+ 595   1          do {
+ 596   2              delay_1(1);
+ 597   2              H2_READ(VTSS_SYS_SYSTEM_SW_STATUS(chip_port), reg_val);
+ 598   2          } while ((reg_val & VTSS_M_QSYS_SYSTEM_SW_STATUS_EQ_AVAIL) && retry_cnt--);
+ 599   1      
+ 600   1      #if defined(H2_DEBUG_ENABLE)
+                  if (!retry_cnt) {
+                      print_cr_lf();
+                      println_str("%% Timeout when calling _ferret_port_reset() procedure 8, chip_port = ");
+                      print_dec(chip_port);
+                      print_cr_lf();
+                  }
+              #endif /* H2_DEBUG_ENABLE */
+ 608   1      
+ 609   1          /* 9. Reset the switch port by setting the following reset bits in CLOCK_CFG:
+ 610   1           *      DEV::CLOCK_CFG.MAC_TX_RST = 1
+ 611   1           *      DEV::CLOCK_CFG.MAC_RX_RST = 1
+ 612   1           *      DEV::CLOCK_CFG.PORT_RST = 1
+ 613   1           */
+ 614   1          H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+ 620   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_TX_RST(1) |
+ 620   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_RX_RST(1) |
+ 620   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST(1),
+ 620   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_MAC_TX_RST |
+ 620   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_MAC_RX_RST |
+ 620   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PORT_RST);
+ 621   1      
+ 622   1          /* 10. Clear flushing again.
+ 623   1           *      REW:PORT:PORT_CFG.FLUSH_ENA = 0
+ 624   1           */
+ 625   1          H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+ 627   1                          VTSS_F_REW_PORT_PORT_CFG_FLUSH_ENA(0),
+ 627   1                          VTSS_M_REW_PORT_PORT_CFG_FLUSH_ENA);
+ 628   1      
+ 629   1          /* 11. Set up the switch port to the new mode of operation. Keep the reset bits in CLOCK_CFG set.
+ 630   1           */
+ 631   1          _setup_mac(chip_port, link_mode);
+ 632   1      
+ 633   1          // New mode of flow control
+ 634   1          h2_setup_flow_control(chip_port, link_mode);
+ 635   1          // New mode of duplex
+ 636   1          H2_WRITE_MASKED(VTSS_SYS_SYSTEM_FRONT_PORT_MODE(chip_port),
+ 638   1                          VTSS_F_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE((link_mode & LINK_MODE_FDX_MASK) ? 0 : 1),
+ 638   1                          VTSS_M_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE);
+ 639   1          // New mode of speed
+ 640   1          H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+ 642   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED(reg_speed_val),
+ 642   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED);
+ 643   1      
+ 644   1          /* 12. Release the switch port from reset by clearing the reset bits in CLOCK_CFG. */
+ 645   1          // EA = 0; // Disable interrupt while doing the clock reset.
+ 646   1          H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+ 652   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_TX_RST(0) |
+ 652   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_RX_RST(0) |
+ 652   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST(0),
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 12  
+
+ 652   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_MAC_TX_RST |
+ 652   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_MAC_RX_RST |
+ 652   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PORT_RST);
+ 653   1          // EA = 1; // Enable interrupt
+ 654   1          delay_1(1); // Small delay after clock reset
+ 655   1      }
+ 656          #endif // FERRET
+ 657          
+ 658          static void _setup_port (vtss_cport_no_t chip_port, uchar link_mode)
+ 659          {
+ 660   1          /* Select the link speed. Refer to chip sepecification: VTSS_DEV_PORT_MODE_CLOCK_CFG . LINK_SPEED
+ 661   1           * 0: No link
+ 662   1           * 1: 1000/2500 Mbps
+ 663   1           * 2: 100 Mbps
+ 664   1           * 3: 10 Mbps
+ 665   1           */
+ 666   1          u8 speed = (link_mode & LINK_MODE_SPEED_MASK);
+ 667   1          u8 reg_speed_val = (speed == LINK_MODE_SPEED_1000 || speed == LINK_MODE_SPEED_2500) ? 1 :
+ 668   1                             (speed == LINK_MODE_SPEED_100) ? 2 :
+ 669   1                             (speed == LINK_MODE_SPEED_10) ? 3 : 0;
+ 670   1      
+ 671   1          if (link_mode != LINK_MODE_DOWN) {
+ 672   2              /* Set up flow control */
+ 673   2              h2_setup_flow_control(chip_port, link_mode);
+ 674   2      
+ 675   2              h2_enable_exc_col_drop(chip_port, 0);
+ 676   2      
+ 677   2              /* Core: Enable port for frame transfer */
+ 678   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE_MASKED(VTSS_SYS_SYSTEM_SWITCH_PORT_MODE(chip_port),
+                                      VTSS_F_SYS_SYSTEM_SWITCH_PORT_MODE_PORT_ENA,
+                                      VTSS_F_SYS_SYSTEM_SWITCH_PORT_MODE_PORT_ENA);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 683   2              H2_WRITE_MASKED(VTSS_QSYS_SYSTEM_SWITCH_PORT_MODE(chip_port),
+ 685   2                              VTSS_F_QSYS_SYSTEM_SWITCH_PORT_MODE_PORT_ENA(1),
+ 685   2                              VTSS_M_QSYS_SYSTEM_SWITCH_PORT_MODE_PORT_ENA);
+ 686   2      #endif
+ 687   2      
+ 688   2              /* Core: Enable/disable system HDX */
+ 689   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE_MASKED(VTSS_SYS_SYSTEM_FRONT_PORT_MODE(chip_port),
+                                      ((link_mode & LINK_MODE_FDX_MASK) ? 0UL : VTSS_F_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MO
+             -DE),
+                                      VTSS_F_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 694   2              H2_WRITE_MASKED(VTSS_SYS_SYSTEM_FRONT_PORT_MODE(chip_port),
+ 696   2                              VTSS_F_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE((link_mode & LINK_MODE_FDX_MASK) ? 0 : 
+             -1),
+ 696   2                              VTSS_M_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE);
+ 697   2      #endif
+ 698   2      
+ 699   2              /* Take MAC, Port, Phy (intern) and PCS (SGMII/Serdes) clock out of reset */
+ 700   2              /* Since there is no GMII in Ferret only port_mode_clock_config used Sumit */
+ 701   2      #if defined(VTSS_ARCH_LUTON26)
+                      if (chip_port > 9) {
+                          H2_WRITE(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+                                   VTSS_F_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED(3UL-(link_mode & LINK_MODE_SPEED_MASK)));
+                      } else {
+                          H2_WRITE(VTSS_DEV_GMII_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),0UL);
+                      }
+              #elif defined(VTSS_ARCH_OCELOT)
+ 709   2              H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 13  
+
+ 711   2                              VTSS_F_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED(reg_speed_val),
+ 711   2                              VTSS_M_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED);
+ 712   2      #endif
+ 713   2      
+ 714   2              /* Enable MAC TX/RX domain */
+ 715   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_ENA_CFG(VTSS_TO_DEV(chip_port)),
+                               VTSS_F_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_RX_ENA |
+                               VTSS_F_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_TX_ENA);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 720   2              H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_ENA_CFG(VTSS_TO_DEV(chip_port)),
+ 724   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_RX_ENA(1) |
+ 724   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_TX_ENA(1),
+ 724   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_RX_ENA |
+ 724   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_TX_ENA);
+ 725   2      #endif
+ 726   2      
+ 727   2          } else { // Link-down
+ 728   2      #if defined(VTSS_ARCH_OCELOT)
+ 729   2              // Bugzilla#21274, reset port to flush queue again when a port is link-down.
+ 730   2              _ferret_port_reset(chip_port, link_mode);
+ 731   2      
+ 732   2      #elif defined(VTSS_ARCH_LUTON26)
+                      if (chip_port < 10) {
+                          H2_WRITE(VTSS_DEV_GMII_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),0xe);
+                      } else if (chip_port < 12) {
+                          H2_WRITE(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+                                   VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_TX_RST |
+                                   VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_RX_RST |
+                                   VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_TX_RST |
+                                   VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST |
+                                   VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST);
+                      } else {
+                          /* This register controls reset of different blocks in the device...
+                           when a *_RST field is set e1f the corresponding block is kept in reset */
+                          H2_WRITE(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)), 0x1);
+                      }
+              #endif
+ 748   2          }
+ 749   1      
+ 750   1          // Update masks
+ 751   1          VTSS_UPDATE_MASKS_DEBUG();
+ 752   1          vtss_update_masks();
+ 753   1      }
+ 754          
+ 755          
+ 756          static void _setup_pcs(vtss_cport_no_t chip_port, uchar link_mode)
+ 757          {
+ 758   1          uchar sd_internal, sd_active_high, sd_enable, if_100fx, if_sgmii, if_type;
+ 759   1          ulong value;
+ 760   1      
+ 761   1          link_mode = link_mode; /* Happy compilier for future usage */
+ 762   1          if_type = phy_map_miim_no(chip_port);
+ 763   1      
+ 764   1      #if defined(VTSS_ARCH_LUTON26)
+                  /* Fixme: should use a MARCO configuration for user to define instead of static? */
+                  sd_internal     = TRUE;
+                  sd_active_high  = TRUE;
+                  sd_enable       = FALSE;
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 771   1          if (phy_map_serdes(chip_port)) {
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 14  
+
+ 772   2              sd_internal     = TRUE;
+ 773   2              sd_active_high  = TRUE;
+ 774   2              sd_enable   = TRUE;
+ 775   2          } else if (if_type == MAC_IF_EXTERNAL) { // External PHY
+ 776   2              sd_internal     = TRUE;
+ 777   2              sd_active_high  = FALSE;
+ 778   2              sd_enable       = FALSE;
+ 779   2          }
+ 780   1      #endif
+ 781   1      
+ 782   1          /* see define for CPORT_MAPTO_PHYMIIMBUS */
+ 783   1          if (if_type == MAC_IF_100FX) {
+ 784   2              if_100fx = TRUE;
+ 785   2              if_sgmii = FALSE;
+ 786   2          } else if (if_type == MAC_IF_SGMII || if_type == MAC_IF_INTERNAL
+ 787   1      #if defined(VTSS_ARCH_LUTON26)
+                             || if_type == MAC_IF_EXTERNAL
+              #elif defined(VTSS_ARCH_OCELOT)
+ 790   1          // Ferret external PHY uses QSGMII interface
+ 791   1      #endif // LUTON26_L10 || LUTON26_L16 || LUTON26_L25
+ 792   1                     ) {
+ 793   2              if_100fx = FALSE;
+ 794   2              if_sgmii = TRUE;
+ 795   2          } else {
+ 796   2              if_100fx = FALSE;
+ 797   2              if_sgmii = FALSE;
+ 798   2          }
+ 799   1      
+ 800   1          /* PSC settings for 100fx/SGMII/SERDES */
+ 801   1          if (if_100fx) {
+ 802   2              /* 100FX PCS */
+ 803   2      #if defined(VTSS_ARCH_LUTON26)
+                      value = VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA |
+                              (sd_internal    ? 0 : VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_SEL) |
+                              (sd_active_high ? 1<<25 : 0)  |  /* VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_SD_POL [D
+             -BG] */
+                              (sd_enable      ? VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_ENA : 0);
+                      H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(VTSS_TO_DEV(chip_port)),value,
+                                      VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA |
+                                      VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_SEL |
+                                      (1<<25) | /* VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_POL [DBG] */
+                                      VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_ENA);
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 815   2              value = VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA(1) |
+ 816   2                      VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_SEL(!sd_internal) |
+ 817   2                      VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_POL(sd_active_high) |
+ 818   2                      VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_ENA(sd_enable);
+ 819   2              H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(VTSS_TO_DEV(chip_port)),
+ 824   2                              value,
+ 824   2                              VTSS_M_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA |
+ 824   2                              VTSS_M_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_SEL |
+ 824   2                              VTSS_M_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_POL |
+ 824   2                              VTSS_M_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_SD_ENA);
+ 825   2      #endif
+ 826   2      
+ 827   2          } else { // SGMII or SERDES mode
+ 828   2      #if defined(VTSS_ARCH_LUTON26)
+                      /* Choose SGMII or Serdes PCS mode */
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG(VTSS_TO_DEV(chip_port)),
+                               (if_sgmii ? VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_SGMII_MODE_ENA : 0));
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(VTSS_TO_DEV(chip_port)),
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 15  
+
+                               (if_sgmii ? VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA : 0));
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG(VTSS_TO_DEV(chip_port)),
+                               (sd_active_high ? VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_POL : 0) |
+                               (sd_enable ? VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_ENA : 0) |
+                               (sd_internal ? 0 : VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_SEL));
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 840   2              /* Choose SGMII or Serdes PCS mode
+ 841   2               */
+ 842   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG(VTSS_TO_DEV(chip_port)),
+ 844   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_SGMII_MODE_ENA(if_sgmii),
+ 844   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_SGMII_MODE_ENA);
+ 845   2      
+ 846   2              /* Software Resolve Abilities
+ 847   2               */
+ 848   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(VTSS_TO_DEV(chip_port)),
+ 850   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA(if_sgmii),
+ 850   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA);
+ 851   2      
+ 852   2              /* Disable Signal Detect, when input pin is '0' to indicate a signal detection.
+ 853   2               */
+ 854   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG(VTSS_TO_DEV(chip_port)),
+ 860   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_POL(sd_active_high) |
+ 860   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_ENA(sd_enable) |
+ 860   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_SEL(!sd_internal),
+ 860   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_POL |
+ 860   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_ENA |
+ 860   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG_SD_SEL);
+ 861   2      #endif
+ 862   2      
+ 863   2              /* Enable PCS */
+ 864   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(VTSS_TO_DEV(chip_port)),
+                               VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 869   2              h2_pcs1g_clock_set(chip_port, TRUE);    // Enable PCS clock
+ 870   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(VTSS_TO_DEV(chip_port)),
+ 872   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA(1),
+ 872   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+ 873   2      #endif
+ 874   2          }
+ 875   1      }
+ 876          
+ 877          static void _setup_mac(vtss_cport_no_t chip_port, uchar link_mode)
+ 878          {
+ 879   1          u32 fdx_gap, hdx_gap_1, hdx_gap_2, value = 0;
+ 880   1          u8  link_spd_dpx;
+ 881   1      
+ 882   1          if (link_mode != LINK_MODE_DOWN) {
+ 883   2              link_spd_dpx = link_mode & LINK_MODE_SPEED_AND_FDX_MASK;
+ 884   2      
+ 885   2      #if defined(VTSS_ARCH_LUTON26)
+                      /* Bugzilla 4388: disabling frame aging when in HDX */
+                      H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+                                      ((link_mode & LINK_MODE_FDX_MASK) ? 0 : VTSS_F_REW_PORT_PORT_CFG_AGE_DIS),
+                                      VTSS_F_REW_PORT_PORT_CFG_AGE_DIS);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 891   2              H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+ 893   2                              ((link_mode & LINK_MODE_FDX_MASK) ? 0 : VTSS_F_REW_PORT_PORT_CFG_AGE_DIS(1)),
+ 893   2                              VTSS_M_REW_PORT_PORT_CFG_AGE_DIS);
+ 894   2      #endif
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 16  
+
+ 895   2      
+ 896   2              /* GIGA mode */
+ 897   2              if ((link_mode & LINK_MODE_SPEED_MASK) != LINK_MODE_SPEED_10 && (link_mode & LINK_MODE_SPEED_MASK)
+             - != LINK_MODE_SPEED_100) {
+ 898   3      #if defined(VTSS_ARCH_LUTON26)
+                          value |= VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA |
+                                   VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_GIGA_MODE_ENA;
+              #elif defined(VTSS_ARCH_OCELOT)
+ 902   3                  value |= VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA(1) |
+ 903   3                           VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_GIGA_MODE_ENA(1);
+ 904   3      #endif
+ 905   3              }
+ 906   2      
+ 907   2              /* FDX mode */
+ 908   2              if (link_spd_dpx & LINK_MODE_FDX_MASK) {
+ 909   3      #if defined(VTSS_ARCH_LUTON26)
+                          value |= VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA;
+              #elif defined(VTSS_ARCH_OCELOT)
+ 912   3                  value |= VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA(1);
+ 913   3      #endif
+ 914   3              }
+ 915   2      
+ 916   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_MODE_CFG(VTSS_TO_DEV(chip_port)), value);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 919   2              H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_MODE_CFG(VTSS_TO_DEV(chip_port)),
+ 922   2                              value,
+ 922   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_GIGA_MODE_ENA |
+ 922   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA);
+ 923   2      #endif
+ 924   2      
+ 925   2              /* Default FDX gaps */
+ 926   2      #if defined(VTSS_ARCH_LUTON26)
+                      if ((link_spd_dpx & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_1000) {
+                          fdx_gap = 5;
+                      } else if (chip_port < 10) {
+                          fdx_gap = 16; // the default value is 17 but the osc is little slower now
+                      } else if (chip_port < 12) {
+                          if (link_spd_dpx == LINK_MODE_HDX_10 || link_spd_dpx == LINK_MODE_HDX_100)
+                              fdx_gap = 14; // the default value is 17 but the osc is little slower now
+                          else
+                              fdx_gap = 16; // the default value is 17 but the osc is little slower now
+                      } else {
+                          fdx_gap = 15;
+                      }
+              #elif defined(VTSS_ARCH_OCELOT)
+ 940   2              // Refer to Serval-1 setting here
+ 941   2              if (link_spd_dpx == LINK_MODE_FDX_10 || link_spd_dpx == LINK_MODE_FDX_100) {
+ 942   3                  if (phy_map_miim_no(chip_port) == MAC_IF_INTERNAL) {
+ 943   4                      // BZ#21595 - MINI PHY ports receive more broadcast traffic rate when speed is 10MFDX/100M
+             -FDX
+ 944   4                      fdx_gap = 16;
+ 945   4                  } else {
+ 946   4                      fdx_gap = 15;
+ 947   4                  }
+ 948   3              } else if (link_spd_dpx == LINK_MODE_HDX_10 || link_spd_dpx == LINK_MODE_HDX_100) {
+ 949   3                  // BZ#21595 - Receive more broadcast traffic rate when speed is 10MHDX/100MHDX
+ 950   3                  if (phy_map_miim_no(chip_port) == MAC_IF_INTERNAL) {
+ 951   4                      // BZ#21738 - MINI PHY ports receive more broadcast traffic rate when speed is 10MHDX/100M
+             -HDX
+ 952   4                      fdx_gap = 16;
+ 953   4                  } else {
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 17  
+
+ 954   4                      fdx_gap = 14;
+ 955   4                  }
+ 956   3              } else { // 1G/2.5G
+ 957   3                  fdx_gap = 5;
+ 958   3              }
+ 959   2              hdx_gap_1 = 0;
+ 960   2              hdx_gap_2 = 0;
+ 961   2      #endif
+ 962   2      
+ 963   2      #if defined(VTSS_ARCH_LUTON26)
+                      /* Default HDX gaps */
+                      if (link_spd_dpx == LINK_MODE_HDX_10) {
+                          hdx_gap_1 = 11;
+                          hdx_gap_2 = 9;
+                      } else if (link_spd_dpx == LINK_MODE_HDX_100) {
+                          hdx_gap_1 = 7;
+                          hdx_gap_2 = 9;
+                      } else {
+                          hdx_gap_1 = 0;
+                          hdx_gap_2 = 0;
+                      }
+              #elif defined(VTSS_ARCH_OCELOT)
+ 976   2              // Refer to Serval-1 setting here
+ 977   2              if (!(link_spd_dpx & LINK_MODE_FDX_MASK)) {
+ 978   3                  hdx_gap_1 = 5;
+ 979   3                  hdx_gap_2 = 5;
+ 980   3              }
+ 981   2      #endif
+ 982   2      
+ 983   2              /* The "tx_ifg" is used to adjust the duration of the inter-frame
+ 984   2               * gap in the Tx direction. It maybe need to adjust on different board.
+ 985   2               * 
+ 986   2               * Test Case:
+ 987   2               * Send a boardcast frame from one to all ports and then monitor
+ 988   2               * the L1 frame received rate to see if it equal the port line speed.
+ 989   2               * Increase the value when rate > line_speed, otherwise, decrease it.
+ 990   2               */
+ 991   2              /* Set MAC IFG Gaps */
+ 992   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_IFG_CFG(VTSS_TO_DEV(chip_port)),
+                               VTSS_F_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_TX_IFG(fdx_gap) |
+                               VTSS_F_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_RX_IFG1(hdx_gap_1) |
+                               VTSS_F_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_RX_IFG2(hdx_gap_2));
+              #elif defined(VTSS_ARCH_OCELOT)
+ 998   2              H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_IFG_CFG(VTSS_TO_DEV(chip_port)),
+1004   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_TX_IFG(fdx_gap) |
+1004   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_RX_IFG1(hdx_gap_1) |
+1004   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_RX_IFG2(hdx_gap_2),
+1004   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_TX_IFG |
+1004   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_RX_IFG1 |
+1004   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_IFG_CFG_RX_IFG2);
+1005   2      #endif
+1006   2      
+1007   2              /* Set MAC HDX Late collision and load PCS seed. */
+1008   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE_MASKED(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_HDX_CFG(VTSS_TO_DEV(chip_port)),
+                                      VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_LATE_COL_POS((chip_port < 12) ? 64UL : 67UL)
+             - |
+                                      VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED(chip_port) |
+                                      VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED_LOAD,
+                                      VTSS_M_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_LATE_COL_POS|
+                                      VTSS_M_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED|
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 18  
+
+                                      VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED_LOAD);
+              #elif defined(VTSS_ARCH_OCELOT)
+1017   2              H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_HDX_CFG(VTSS_TO_DEV(chip_port)),
+1023   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_LATE_COL_POS(67) |
+1023   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED(chip_port) |
+1023   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED_LOAD(1),
+1023   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_LATE_COL_POS|
+1023   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED|
+1023   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED_LOAD);
+1024   2      #endif
+1025   2      
+1026   2              /* Clear seed-load after a small delay (rising edge is sampled in rx-clock domain). */
+1027   2              delay_1(2);
+1028   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE_MASKED(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_HDX_CFG(VTSS_TO_DEV(chip_port)),
+                                      0,
+                                      VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED_LOAD);
+              #elif defined(VTSS_ARCH_OCELOT)
+1033   2              H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_HDX_CFG(VTSS_TO_DEV(chip_port)),
+1035   2                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED_LOAD(0),
+1035   2                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_SEED_LOAD);
+1036   2              /* Disable HDX fast control */
+1037   2              H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_PORT_MISC(VTSS_TO_DEV(chip_port)), 
+1039   2                              VTSS_F_DEV_PORT_MODE_PORT_MISC_HDX_FAST_DIS(1),
+1039   2                              VTSS_M_DEV_PORT_MODE_PORT_MISC_HDX_FAST_DIS);
+1040   2      #endif
+1041   2      
+1042   2      #if defined(VTSS_ARCH_LUTON26)
+                      /* Check point: Should be 9 or 11 no matter L10, L16 and L25? */
+                      if (chip_port > 11) {
+              #if MAC_TO_MEDIA
+                          u8   mac_if = phy_map_miim_no(chip_port);
+              
+                          if ((mac_if != MAC_IF_SERDES_1G) &&
+                              (mac_if != MAC_IF_100FX)  &&
+                              (mac_if != MAC_IF_SGMII))
+              #endif
+                              _setup_pcs(chip_port, link_mode);
+                      }
+              #endif
+1055   2      
+1056   2              if (link_spd_dpx == LINK_MODE_HDX_10 ||
+1057   2                  link_spd_dpx == LINK_MODE_HDX_100)
+1058   2              {
+1059   3      #if defined(VTSS_ARCH_LUTON26)
+                          H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+                                          VTSS_F_REW_PORT_PORT_CFG_AGE_DIS,
+                                          VTSS_F_REW_PORT_PORT_CFG_AGE_DIS);
+              #elif defined(VTSS_ARCH_OCELOT)
+1064   3                  H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+1066   3                                  VTSS_F_REW_PORT_PORT_CFG_AGE_DIS(1),
+1066   3                                  VTSS_M_REW_PORT_PORT_CFG_AGE_DIS);
+1067   3      #endif
+1068   3              } else {
+1069   3      #if defined(VTSS_ARCH_LUTON26)
+                          H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+                                          0,
+                                          VTSS_F_REW_PORT_PORT_CFG_AGE_DIS);
+              #elif defined(VTSS_ARCH_OCELOT)
+1074   3                  H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port),
+1076   3                                  VTSS_F_REW_PORT_PORT_CFG_AGE_DIS(0),
+1076   3                                  VTSS_M_REW_PORT_PORT_CFG_AGE_DIS);
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 19  
+
+1077   3      #endif
+1078   3              }
+1079   2          }
+1080   1      }
+1081          
+1082          
+1083          /*****************************************************************************
+1084           *
+1085           *
+1086           * Public functions
+1087           *
+1088           *
+1089           *
+1090           ****************************************************************************/
+1091          /**
+1092           * Reset switch chip.
+1093           */
+1094          void h2_reset (void) small
+1095          {
+1096   1      
+1097   1      #if defined(VTSS_ARCH_OCELOT)
+1098   1          H2_WRITE_MASKED(VTSS_DEVCPU_GCB_CHIP_REGS_SOFT_RST,
+1100   1                                              VTSS_F_DEVCPU_GCB_CHIP_REGS_SOFT_RST_SOFT_CHIP_RST(1),
+1100   1                                              VTSS_M_DEVCPU_GCB_CHIP_REGS_SOFT_RST_SOFT_CHIP_RST);
+1101   1      #elif defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_DEVCPU_RST_REGS_SOFT_CHIP_RST,
+                                  VTSS_F_DEVCPU_GCB_DEVCPU_RST_REGS_SOFT_CHIP_RST_SOFT_CHIP_RST,
+                                  VTSS_F_DEVCPU_GCB_DEVCPU_RST_REGS_SOFT_CHIP_RST_SOFT_CHIP_RST);
+              #endif
+1106   1          while (TRUE) {
+1107   2          }
+1108   1      }
+1109          
+1110          /**
+1111           * Do basic initializations of chip needed after a chip reset.
+1112           */
+1113          void h2_post_reset (void)
+1114          {
+1115   1          ulong cmd;
+1116   1          uchar locked;
+1117   1      
+1118   1          _h2_setup_cpu_if();
+1119   1      
+1120   1      #if defined(VTSS_ARCH_OCELOT)
+1121   1          /* Setup IB-Calibration, the process must be done before serdes mode setup */
+1122   1          /* Setup HSIO PLL */
+1123   1          locked = h2_serdes_macro_phase_loop_locked();
+1124   1          if (!locked) {
+1125   2              println_str("%% Timeout when calling h2_serdes_macro_phase_loop_locked()");
+1126   2              sysutil_assert_event_set(SYS_ASSERT_EVENT_H2_POST_RESET);
+1127   2              return;
+1128   2          }
+1129   1      #endif
+1130   1      
+1131   1          /* Setup serdes mode (SGMII/QSGMII/2.5G and etc.) */
+1132   1          h2_serdes_macro_config();
+1133   1      
+1134   1          /* Initialize memories */
+1135   1      #if defined(VTSS_ARCH_OCELOT)
+1136   1          H2_WRITE(VTSS_SYS_SYSTEM_RESET_CFG,
+1138   1                   VTSS_F_SYS_SYSTEM_RESET_CFG_MEM_ENA(1) |
+1138   1                   VTSS_F_SYS_SYSTEM_RESET_CFG_MEM_INIT(1));
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 20  
+
+1139   1      #elif defined(VTSS_ARCH_LUTON26)
+                    H2_WRITE(VTSS_SYS_SYSTEM_RESET_CFG,
+                           VTSS_F_SYS_SYSTEM_RESET_CFG_MEM_ENA |
+                           VTSS_F_SYS_SYSTEM_RESET_CFG_MEM_INIT);
+              #endif
+1144   1      
+1145   1          /* Wait done flag */
+1146   1          start_timer(MSEC_100);
+1147   1      #if defined(VTSS_ARCH_LUTON26)
+                  do {
+                      H2_READ(VTSS_SYS_SYSTEM_RESET_CFG, cmd);
+                  } while ((cmd & VTSS_F_SYS_SYSTEM_RESET_CFG_MEM_INIT) != 0 && !timeout());
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+1153   1          do {
+1154   2              H2_READ(VTSS_SYS_SYSTEM_RESET_CFG, cmd);
+1155   2          } while (VTSS_X_SYS_SYSTEM_RESET_CFG_MEM_INIT(cmd) && !timeout());
+1156   1      #endif
+1157   1      
+1158   1          if (timeout()) {
+1159   2      #if defined(H2_DEBUG_ENABLE)
+                      println_str("%% Timeout when calling h2_post_reset()");
+              #endif /* H2_DEBUG_ENABLE */
+1162   2              sysutil_assert_event_set(SYS_ASSERT_EVENT_H2_INIT);
+1163   2              return;
+1164   2          }
+1165   1      
+1166   1          /* Enable the switch core */
+1167   1      #if defined(VTSS_ARCH_OCELOT)
+1168   1          H2_WRITE_MASKED(VTSS_SYS_SYSTEM_RESET_CFG,
+1170   1                          VTSS_F_SYS_SYSTEM_RESET_CFG_CORE_ENA(1),
+1170   1                          VTSS_M_SYS_SYSTEM_RESET_CFG_CORE_ENA);
+1171   1      #elif defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE_MASKED(VTSS_SYS_SYSTEM_RESET_CFG,
+                                  VTSS_F_SYS_SYSTEM_RESET_CFG_CORE_ENA,
+                                  VTSS_F_SYS_SYSTEM_RESET_CFG_CORE_ENA);
+              #endif
+1176   1      
+1177   1      
+1178   1      #if defined(VTSS_ARCH_LUTON26)
+                  /* Setup HSIO PLL */
+                  locked = h2_serdes_macro_phase_loop_locked();
+                  if (!locked) {
+                      sysutil_assert_event_set(SYS_ASSERT_EVENT_H2_POST_RESET);
+                      return;
+                  }
+              #elif defined(VTSS_ARCH_OCELOT)
+1186   1          // Ferret has the different initial proceduces.
+1187   1          // We need to setup HSIO PLL before calling h2_serdes_macro_config()
+1188   1      #endif
+1189   1      
+1190   1          /* Initialize MAC-table and VLAN-table then wait for done */
+1191   1          h2_mactab_clear();
+1192   1          h2_vlan_clear_tab();
+1193   1          delay(MSEC_40);
+1194   1      
+1195   1          h2_mactab_agetime_set();
+1196   1      
+1197   1          /* Initialize leaky buckets */
+1198   1      #if defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE(VTSS_SYS_SCH_SCH_LB_CTRL, VTSS_F_SYS_SCH_SCH_LB_CTRL_LB_INIT);
+                  _l26_buf_conf_set();
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 21  
+
+                  do { /* Wait until leaky buckets initialization is completed  */
+                      H2_READ(VTSS_SYS_SCH_SCH_LB_CTRL, cmd);
+                  } while(cmd & VTSS_F_SYS_SCH_SCH_LB_CTRL_LB_INIT);
+              #elif defined(VTSS_ARCH_OCELOT)
+1205   1          // Ferret, TODO. Keep the QoS setting as the chip factory default
+1206   1          _ferret_buf_conf_set();
+1207   1      #endif
+1208   1      
+1209   1          /* Setup frame ageing - "2 sec" */
+1210   1      #if defined(VTSS_ARCH_LUTON26)
+                  // The unit is 4us on Luton
+                  H2_WRITE(VTSS_SYS_SYSTEM_FRM_AGING, 0x1dcd6500);
+              #elif defined(VTSS_ARCH_OCELOT)
+1214   1          // The unit is 6.5us on Ferret
+1215   1          H2_WRITE(VTSS_SYS_SYSTEM_FRM_AGING,
+1217   1                  VTSS_F_SYS_SYSTEM_FRM_AGING_AGE_TX_ENA(1) |
+1217   1                  VTSS_F_SYS_SYSTEM_FRM_AGING_MAX_AGE(20000000 / 65));
+1218   1      #endif
+1219   1      
+1220   1          H2_WRITE(VTSS_ANA_ANA_TABLES_ANMOVED, 0);
+1221   1      }
+1222          
+1223          
+1224          /**
+1225           * Presets link mode of all ports.
+1226           */
+1227          void h2_init_ports (void)
+1228          {
+1229   1          vtss_iport_no_t iport_idx;
+1230   1          vtss_cport_no_t chip_port;
+1231   1      #if defined(VTSS_ARCH_OCELOT)
+1232   1          ulong  reg_val;
+1233   1          port_bit_mask_t chip_port_map=0;
+1234   1      #endif
+1235   1      
+1236   1      #if TRANSIT_LAG || TRANSIT_LACP
+                  /* trunk and LACP */
+                  memset(&h2_current_state, 0, sizeof(h2_current_state));
+              #endif
+1240   1          
+1241   1          /* Max frame length */
+1242   1         for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+1243   2              chip_port = iport2cport(iport_idx);
+1244   2      #if defined(VTSS_ARCH_OCELOT)
+1245   2              chip_port_map |= (0x1 << chip_port); /* bit map for the use chip ports */
+1246   2              H2_WRITE(VTSS_DEV_MAC_CFG_STATUS_MAC_MAXLEN_CFG(VTSS_TO_DEV(chip_port)), MAX_FRAME_SIZE);
+1247   2      #elif defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_MAXLEN_CFG(VTSS_TO_DEV(chip_port)), MAX_FRAME_SIZE);
+              #endif
+1250   2              h2_setup_port(chip_port, LINK_MODE_DOWN);
+1251   2          }
+1252   1      
+1253   1      #if defined(VTSS_ARCH_OCELOT)
+1254   1          H2_READ(VTSS_HSIO_HW_CFGSTAT_HW_CFG,reg_val);
+1255   1          if (reg_val&VTSS_M_HSIO_HW_CFGSTAT_HW_CFG_QSGMII_ENA) {
+1256   2              for (chip_port = 4; chip_port < 8; chip_port++) { /* check QSGMII ports only */
+1257   3                  if (!TEST_PORT_BIT_MASK(chip_port, &chip_port_map)) {
+1258   4                      //print_str("Unmap port idx : ");
+1259   4                      //print_hex_b(chip_port);
+1260   4                      //print_cr_lf();
+1261   4                      /* Port Reset for Unused QSGMII ports */
+1262   4                      _port_reset(chip_port, LINK_MODE_DOWN);
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 22  
+
+1263   4                      H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG( VTSS_TO_DEV(chip_port)),
+1269   4                                      VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_TX_RST(0) |
+1269   4                                      VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST(0) |
+1269   4                                      VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST(0),
+1269   4                                      VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PCS_TX_RST |
+1269   4                                      VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST |
+1269   4                                      VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PORT_RST);
+1270   4                  }
+1271   3              }
+1272   2          }
+1273   1      #endif
+1274   1          /* Update source mask */
+1275   1          // No need to update when initial as the default value works well
+1276   1          //_vtss_update_src_mask(0);
+1277   1          VTSS_UPDATE_MASKS_DEBUG();
+1278   1          vtss_update_masks();
+1279   1      }
+1280          
+1281          /**
+1282           * Set up port including MAC according to link_mode parameter.
+1283           *
+1284           * @see Please see main.h for a description of link_mode.
+1285           */
+1286          void h2_setup_port(vtss_cport_no_t chip_port, uchar link_mode)
+1287          {
+1288   1          _port_reset(chip_port, link_mode);
+1289   1          _setup_port(chip_port, link_mode);
+1290   1      
+1291   1      #if defined(VTSS_ARCH_OCELOT)
+1292   1          _setup_pcs(chip_port, link_mode);
+1293   1      #elif defined(VTSS_ARCH_LUTON26)
+                      if (chip_port > 11) {
+              #if MAC_TO_MEDIA
+                          u8   mac_if = phy_map_miim_no(chip_port);
+              
+                          if ((mac_if != MAC_IF_SERDES_1G) &&
+                              (mac_if != MAC_IF_100FX)  &&
+                              (mac_if != MAC_IF_SGMII))
+              #endif
+                              {
+                                  _setup_pcs(chip_port, link_mode);
+                              }
+                      }
+              #endif // VTSS_ARCH_OCELOT
+1307   1      }
+1308          
+1309          
+1310          /**
+1311           * Port reset procedure and flush MAC address entries when link-down.
+1312           *
+1313           */
+1314          static void _port_reset(vtss_cport_no_t chip_port, uchar link_mode)
+1315          {
+1316   1      #if defined(VTSS_ARCH_OCELOT)
+1317   1          /* Note: It is not necessary to reset the SerDes macros. */
+1318   1          _ferret_port_reset(chip_port, link_mode);
+1319   1      
+1320   1      #elif defined(VTSS_ARCH_LUTON26)
+                  u32 value;
+                  u8  mac_if = phy_map_miim_no(chip_port);
+              
+                  /* Port disable and flush procedure: */
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 23  
+
+                  /* 0.1: Reset the PCS */
+                  if (chip_port > 9) {
+                      H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)), 0,
+                                      VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST);
+                  }
+              
+                  /* 1: Disable MAC frame reception */
+                  H2_WRITE_MASKED(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_ENA_CFG(VTSS_TO_DEV(chip_port)), 0,
+                                  VTSS_F_DEV_MAC_CFG_STATUS_MAC_ENA_CFG_RX_ENA);
+              
+              
+                  /* 2: Disable traffic being sent to or from switch port */
+                  H2_WRITE_MASKED(VTSS_SYS_SYSTEM_SWITCH_PORT_MODE(chip_port), 0,
+                                  VTSS_F_SYS_SYSTEM_SWITCH_PORT_MODE_PORT_ENA);
+              
+                  /* 3: Disable dequeuing from the egress queues */
+                  H2_WRITE_MASKED(VTSS_SYS_SYSTEM_PORT_MODE(chip_port), VTSS_F_SYS_SYSTEM_PORT_MODE_DEQUEUE_DIS,
+                                  VTSS_F_SYS_SYSTEM_PORT_MODE_DEQUEUE_DIS);
+              
+                  /* 4: Wait a worst case time 8ms (jumbo/10Mbit) */
+                  delay_1(10);
+              
+                  /* 5: Disable HDX backpressure (Bugzilla 3203) */
+                  H2_WRITE_MASKED(VTSS_SYS_SYSTEM_FRONT_PORT_MODE(chip_port), 0UL,
+                                  VTSS_F_SYS_SYSTEM_FRONT_PORT_MODE_HDX_MODE);
+              
+                  /* 6: Flush the queues accociated with the port */
+                  H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port), VTSS_F_REW_PORT_PORT_CFG_FLUSH_ENA,
+                                  VTSS_F_REW_PORT_PORT_CFG_FLUSH_ENA);
+              
+                  /* 7: Enable dequeuing from the egress queues */
+                  H2_WRITE_MASKED(VTSS_SYS_SYSTEM_PORT_MODE(chip_port), 0UL,
+                                  VTSS_F_SYS_SYSTEM_PORT_MODE_DEQUEUE_DIS);
+              
+                  /* 9: Reset the clock */
+                  if (chip_port > 9) {
+              #if MAC_TO_MEDIA
+                      if (mac_if == MAC_IF_100FX) {
+                          H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+                               VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_TX_RST |
+                               VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_RX_RST |
+                               VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PHY_RST, 0x000000c4);
+                      } else
+              #endif
+                      {
+                          H2_WRITE(VTSS_DEV_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+                               VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_TX_RST |
+                               VTSS_F_DEV_PORT_MODE_CLOCK_CFG_MAC_RX_RST |
+                               VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST);
+                      }
+                  } else {
+                      H2_WRITE(VTSS_DEV_GMII_PORT_MODE_CLOCK_CFG(VTSS_TO_DEV(chip_port)),
+                               VTSS_F_DEV_GMII_PORT_MODE_CLOCK_CFG_MAC_TX_RST |
+                               VTSS_F_DEV_GMII_PORT_MODE_CLOCK_CFG_MAC_RX_RST |
+                               VTSS_F_DEV_GMII_PORT_MODE_CLOCK_CFG_PORT_RST);
+                  }
+              
+                  /* 8. Wait until flushing is complete */
+                  start_timer(MSEC_2000);
+                  do {
+                      H2_READ(VTSS_SYS_SYSTEM_SW_STATUS(chip_port), value);
+                  } while ((value & VTSS_M_SYS_SYSTEM_SW_STATUS_EQ_AVAIL) && !timeout());
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 24  
+
+              
+                  if (timeout()) {
+              #if defined(H2_DEBUG_ENABLE)
+                      print_cr_lf();
+                      println_str("%% Timeout when calling _port_reset(), chip_port = ");
+                      print_dec(chip_port);
+                      print_cr_lf();
+              #endif /* H2_DEBUG_ENABLE */
+                      return;
+                  }
+              
+                  /* 10: Clear flushing */
+                  H2_WRITE_MASKED(VTSS_REW_PORT_PORT_CFG(chip_port), 0, VTSS_F_REW_PORT_PORT_CFG_FLUSH_ENA);
+              
+                  _setup_mac(chip_port, link_mode);
+              #endif
+1403   1      
+1404   1          /* The port is disabled and flushed, now set up the port in the new operating mode */
+1405   1          if (link_mode == LINK_MODE_DOWN) {
+1406   2              h2_mactab_flush_port(chip_port);  // Flush MAC address entries
+1407   2          }
+1408   1      }
+1409          
+1410          #if H2_ID_CHECK
+              /**
+               * Check health status of switch chip.
+               *
+               * @return  Returns TRUE, if chip is ok, otherwise <> FALSE.
+               */
+              BOOL h2_chip_family_support(void) small
+              {
+                  ulong chip_id = 0x0;
+              
+              #if defined(LUTON26_L25)
+              #define EXPECTED_CHIPID 0x07422
+              #elif defined(LUTON26_L16)
+              #define EXPECTED_CHIPID 0x07421
+              #elif defined(LUTON26_L10)
+              #define EXPECTED_CHIPID 0x07420
+              #elif defined(VTSS_ARCH_OCELOT)
+              #define EXPECTED_CHIPID 0X7514
+              #else
+              #error "Not defined yet: EXPECTED_CHIPID"
+              #endif
+              
+                  H2_READ(VTSS_DEVCPU_GCB_CHIP_REGS_CHIP_ID, chip_id);
+                  if ((VTSS_X_DEVCPU_GCB_CHIP_REGS_CHIP_ID_PART_ID(chip_id) & EXPECTED_CHIPID) != EXPECTED_CHIPID) {
+              #if !defined(NO_DEBUG_IF)
+                      print_str("%% Chip ID is unsupport");
+                      print_hex_dw(chip_id);
+                      print_cr_lf();
+              #endif
+              
+                      return FALSE;
+                  }
+              
+                  return TRUE;
+              }
+              #endif // H2_ID_CHECK
+1446          
+1447          /*****************************************************************************
+1448           *
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 25  
+
+1449           *
+1450           * Public register access functions (primarily for code space optimization)
+1451           *
+1452           *
+1453           *
+1454           ****************************************************************************/
+1455          
+1456          
+1457          void h2_enable_exc_col_drop (vtss_cport_no_t chip_port, uchar drop_enable)
+1458          {
+1459   1      #if defined(VTSS_ARCH_OCELOT)
+1460   1          H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_HDX_CFG(VTSS_TO_DEV(chip_port)),
+1462   1                          VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_RETRY_AFTER_EXC_COL_ENA(!drop_enable),
+1462   1                          VTSS_M_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_RETRY_AFTER_EXC_COL_ENA);
+1463   1      #elif defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE_MASKED(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_HDX_CFG(VTSS_TO_DEV(chip_port)),
+                                  (drop_enable? 0UL:VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_RETRY_AFTER_EXC_COL_ENA),
+                                  VTSS_F_DEV_MAC_CFG_STATUS_MAC_HDX_CFG_RETRY_AFTER_EXC_COL_ENA);
+              #endif
+1468   1      }
+1469          
+1470          /*****************************************************************************
+1471           *
+1472           *
+1473           * Help functions
+1474           *
+1475           *
+1476           *
+1477           ****************************************************************************/
+1478          
+1479          /**
+1480           * In Unmanaged code, this function returns the the port mask without sport
+1481           * set. In managed code, the result mask is determined by the User defined
+1482           * Private VLAN group (with the aggregation in mind).
+1483           */
+1484          #if TRANSIT_LAG
+              static port_bit_mask_t _vtss_get_pvlan_mask(vtss_cport_no_t chip_port)
+              {
+                  return ~PORT_BIT_MASK(chip_port);
+              }
+              
+              static port_bit_mask_t vtss_aggr_find_group(uchar port_no)
+              {
+                  uchar group;
+              
+                  VTSS_COMMON_ASSERT(port_no < MAX_PORT);
+                  for (group = 0; group < TOTAL_AGGRS; group++) {
+                      //print_str(" group: "); print_dec(group); print_spaces(2); print_hex_dw(h2_current_state.h2_curre
+             -nt_aggr_groups[group]); 
+                      if (TEST_PORT_BIT_MASK(port_no, &h2_current_state.h2_current_aggr_groups[group]))
+                          return h2_current_state.h2_current_aggr_groups[group];
+                  }        
+                  return PORT_BIT_MASK(port_no);
+              }
+              
+              
+              static void _vtss_update_dest_mask(port_bit_mask_t link_mask)
+              {
+                  // Fix compilation warning.
+                  
+                  vtss_iport_no_t iport_idx;
+                  vtss_cport_no_t chip_port;
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 26  
+
+                  port_bit_mask_t member;
+              
+                  for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+                      chip_port = iport2cport(iport_idx);
+                      member = vtss_aggr_find_group(chip_port) & link_mask;
+                      H2_WRITE(VTSS_ANA_PGID_PGID(chip_port + VTSS_PGID_DEST_MASK_START), member);
+                      //print_dec(chip_port + VTSS_PGID_DEST_MASK_START); print_spaces(3); print_hex_dw(member); print_c
+             -r_lf();
+                  }    
+                  
+              }
+              
+              static void _vtss_update_src_mask(port_bit_mask_t link_mask)
+              {
+                  vtss_iport_no_t iport_idx;
+                  vtss_cport_no_t chip_port;
+                  port_bit_mask_t member;
+              
+                  for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+                      chip_port = iport2cport(iport_idx);
+              #if defined(VTSS_ARCH_OCELOT)
+                      member = link_mask & _vtss_get_pvlan_mask(chip_port) & (~vtss_aggr_find_group(chip_port));
+                      //member = member | PORT_BIT_MASK(CPU_CHIP_PORT);
+                      H2_WRITE(VTSS_ANA_PGID_PGID(chip_port + VTSS_PGID_SOURCE_MASK_START), member);
+                      //print_dec(chip_port + VTSS_PGID_SOURCE_MASK_START); print_spaces(3); print_hex_dw(member); print
+             -_cr_lf();
+              #elif defined(VTSS_ARCH_LUTON26)
+                      /* STP and Authentication state allow forwarding from port. */
+                      if (_ingr_forwarding(chip_port)) {
+                          member = _vtss_get_pvlan_mask(chip_port);
+                      } else {
+                          /* Exclude all ports by default */
+                          member = 0;
+                      }
+              
+                      H2_WRITE_MASKED(VTSS_ANA_ANA_TABLES_PGID(chip_port + VTSS_PGID_SOURCE_MASK_START),
+                                      member & link_mask,
+                                      ALL_PORTS);
+              #endif
+              
+              #if defined(H2_DEBUG_ENABLE)
+              {
+                      u32 reg_val;
+              
+                      print_str("link_mask=0x");
+                      print_hex_b(link_mask);
+              
+                      print_str(", chip_port=");
+                      print_dec_8_right_2(chip_port);
+              
+                      print_str(", member=0x");
+                      print_hex_b(member);
+              
+                      H2_READ(VTSS_ANA_PGID_PGID(chip_port + VTSS_PGID_SOURCE_MASK_START), reg_val);
+                      print_str(", ANA:PGID:PGID=0x");
+                      print_hex_dw(reg_val);
+                      print_cr_lf();
+              }
+              #endif /* H2_DEBUG_ENABLE */
+                  }
+              
+                  delay(MSEC_100);
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 27  
+
+              }
+              
+              static void _vtss_update_aggr_mask(port_bit_mask_t link_mask)
+              {
+                  vtss_iport_no_t i_port_no, e_port_no;
+                  vtss_cport_no_t ic_port_no, ec_port_no;
+                  // The size of aggr_xxx array must be NO_OF_CHIP_PORTS
+                  uchar           aggr_count[NO_OF_CHIP_PORTS], aggr_index[NO_OF_CHIP_PORTS], n;
+                  uchar           aggr_lport[NO_OF_CHIP_PORTS]; 
+                  port_bit_mask_t member_mask = 0;
+                  port_bit_mask_t test_member_mask = 0;
+                  uchar ix;
+                  
+                  /* Update aggregation masks */
+                  //memset(aggr_count, 0, sizeof(aggr_count));
+                  //memset(aggr_index, 0, sizeof(aggr_index));
+              
+                  /* Count number of operational ports and index of each port */
+                  for (i_port_no = MIN_PORT; i_port_no < MAX_PORT; i_port_no++) {
+                      ic_port_no = iport2cport(i_port_no);
+                      aggr_count[ic_port_no] = 0; 
+                      aggr_index[ic_port_no] = 0;
+                      aggr_lport[ic_port_no] = ic_port_no;
+              
+                      /* If port is up and forwarding */
+                      if (TEST_PORT_BIT_MASK(ic_port_no, &link_mask)) {
+                          member_mask = vtss_aggr_find_group(ic_port_no) & link_mask;
+                          //print_cr_lf(); print_str("yyy "); print_dec(ic_port_no); print_spaces(3); print_hex_dw(membe
+             -r_mask); print_cr_lf();
+                          for (e_port_no = MIN_PORT; e_port_no < MAX_PORT; e_port_no++) {
+                              ec_port_no = iport2cport(e_port_no);
+                              if (TEST_PORT_BIT_MASK(ec_port_no, &member_mask)) {
+                                  /* Port is forwarding and member of the same aggregation */
+                                  aggr_count[ic_port_no] += 1;
+                                  if (ec_port_no < ic_port_no) {
+                                      aggr_index[ic_port_no] += 1;
+                                      if (ec_port_no < aggr_lport[ic_port_no] ) {
+                                          aggr_lport[ic_port_no] = ec_port_no;
+                                      }    
+                                  }    
+                              }
+                          }
+                          //print_str("xxx ");
+                          //print_dec(ic_port_no); print_spaces(3); print_dec(aggr_count[ic_port_no]);
+                          //print_spaces(3); print_dec(aggr_index[ic_port_no]);
+                          //print_str("lport: "); print_dec(aggr_lport[ic_port_no]);print_cr_lf();
+                          
+                      }
+                  }
+              
+                  for (ix = 0; ix < MAX_KEY; ix++) {
+                      /* Include one forwarding port from each aggregation */
+                      for (i_port_no = MIN_PORT; i_port_no < MAX_PORT; i_port_no++) {
+                          ic_port_no = iport2cport(i_port_no);
+                          n = aggr_index[ic_port_no] + ix;
+                          WRITE_PORT_BIT_MASK(ic_port_no,
+                                              (aggr_count[ic_port_no] && (n % aggr_count[ic_port_no]) == 0) ? 1 : 0,
+                                              &member_mask);
+                      }
+              
+                      /* Write to aggregation table */
+                      H2_WRITE(VTSS_ANA_PGID_PGID(VTSS_PGID_AGGR_MASK_START + ix), member_mask);
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 28  
+
+                      H2_READ(VTSS_ANA_PGID_PGID(VTSS_PGID_AGGR_MASK_START + ix), test_member_mask);
+                      if (test_member_mask != member_mask) {
+                          //delay_1(10);
+                          print_dec(VTSS_PGID_AGGR_MASK_START + ix); print_spaces(3); print_hex_dw(member_mask);
+                          print_spaces(3); print_hex_dw(test_member_mask); print_cr_lf();
+                      }
+                  }
+                  
+                  /* Update port map table on aggregation changes */
+                  for (i_port_no = MIN_PORT; i_port_no < MAX_PORT; i_port_no++) {    
+                      ic_port_no = iport2cport(i_port_no);
+                      H2_WRITE_MASKED(VTSS_ANA_PORT_PORT_CFG(ic_port_no),
+                                          VTSS_F_ANA_PORT_PORT_CFG_PORTID_VAL(aggr_lport[ic_port_no]), 
+                                          VTSS_M_ANA_PORT_PORT_CFG_PORTID_VAL);
+                  }
+              }
+              
+              void vtss_show_masks(void)
+              {
+                  uchar ix;
+                  ulong reg_val;
+                  
+                  for(ix=0; ix<= VTSS_PGID_SOURCE_MASK_START + NO_OF_CHIP_PORTS; ix++) {
+                      print_dec(ix);print_str(": 0x"); 
+                      H2_READ(VTSS_ANA_PGID_PGID(ix), reg_val);
+                      print_hex_dw(reg_val);
+                      print_cr_lf();
+                  }    
+              }    
+              #endif //TRANSIT_LAG
+1661          
+1662          void vtss_update_masks(void)
+1663          {
+1664   1      #if TRANSIT_LAG     
+                  port_bit_mask_t     link_mask;
+              
+              #ifndef VTSS_COMMON_NDEBUG
+                  vtss_printf("vtss_update_masks: from file \"%s\" line %u\n",
+                              _common_file, _common_line);
+              #endif /* !VTSS_COMMON_NDEBUG */
+              
+                  link_mask = linkup_cport_mask_get();
+              
+                  /*
+                   * Update source mask
+                   */
+                   _vtss_update_src_mask(link_mask);
+              
+                  /*
+                   * Update destination table
+                   */
+                  _vtss_update_dest_mask(link_mask);
+              
+                  /*
+                   * Update aggregation masks
+                   */
+                  _vtss_update_aggr_mask(link_mask);
+              #endif //TRANSIT_LAG
+1689   1      }
+1690          
+1691          #if TRANSIT_LAG 
+              void vtss_set_aggr_group(uchar group, port_bit_mask_t members)
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 29  
+
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Save aggregation group info.
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               * ************************************************************************ */
+              {
+                  VTSS_COMMON_ASSERT(group < TOTAL_AGGRS);
+                  h2_current_state.h2_current_aggr_groups[group] = members;
+                  //print_str("group: "); print_dec(group); print_spaces(2); print_hex_dw(members);
+                  vtss_update_masks();
+              }
+              
+              /* ************************************************************************ */
+              port_bit_mask_t vtss_get_aggr_group(uchar group)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Return aggregation group info.
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               * ************************************************************************ */
+              {
+                  VTSS_COMMON_ASSERT(group < TOTAL_AGGRS);
+                  return h2_current_state.h2_current_aggr_groups[group];
+              }
+              #endif //TRANSIT_LAG
+1721          
+1722          void h2_chip_reset(void)
+1723          {
+1724   1      #if defined(VTSS_ARCH_OCELOT)
+1725   1          H2_WRITE(VTSS_DEVCPU_GCB_CHIP_REGS_SOFT_RST,
+1726   1                   VTSS_F_DEVCPU_GCB_CHIP_REGS_SOFT_RST_SOFT_CHIP_RST(1));
+1727   1      
+1728   1      #elif defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE(VTSS_DEVCPU_GCB_DEVCPU_RST_REGS_SOFT_CHIP_RST,
+                           VTSS_F_DEVCPU_GCB_DEVCPU_RST_REGS_SOFT_CHIP_RST_SOFT_CHIP_RST);
+              #endif // VTSS_ARCH_OCELOT
+1732   1      }
+1733          
+1734          #if defined(NPI_CHIP_PORT) && NPI_CHIP_PORT != NPI_ACT_NORMAL_PORT
+              /* Set NPI configuration
+               * Notices that the original NPI port will be inactive after applied the new setting.
+               */
+              void npi_port_set(h2_npi_conf_t *npi_conf)
+              {
+              #if defined(VTSS_ARCH_OCELOT)
+                  H2_WRITE(VTSS_QSYS_SYSTEM_EXT_CPU_CFG,
+                           VTSS_F_QSYS_SYSTEM_EXT_CPU_CFG_EXT_CPU_PORT(npi_conf->mode_enabled ? npi_conf->chip_port : 0)
+             - |
+                           VTSS_F_QSYS_SYSTEM_EXT_CPU_CFG_EXT_CPUQ_MSK(npi_conf->mode_enabled ? npi_conf->queue_mask : 0
+             -));
+              
+                   /* Enable/Disable IFH parsing upon injection / extraction */
+                  H2_WRITE_MASKED(VTSS_SYS_SYSTEM_PORT_MODE(npi_conf->chip_port), 
+                                  VTSS_F_SYS_SYSTEM_PORT_MODE_INCL_INJ_HDR(npi_conf->mode_enabled ? npi_conf->prefix_hea
+             -der_mode : 0) |
+                                  VTSS_F_SYS_SYSTEM_PORT_MODE_INCL_XTR_HDR(npi_conf->mode_enabled ? npi_conf->prefix_hea
+             -der_mode : 0),
+                                  VTSS_M_SYS_SYSTEM_PORT_MODE_INCL_INJ_HDR |
+                                  VTSS_M_SYS_SYSTEM_PORT_MODE_INCL_XTR_HDR);
+C51 COMPILER V9.60.0.0   H2                                                                11/30/2021 16:22:20 PAGE 30  
+
+              #endif // VTSS_ARCH_OCELOT
+              }
+              #endif // NPI_CHIP_PORT && NPI_CHIP_PORT != NPI_ACT_NORMAL_PORT
+1754          
+1755          /****************************************************************************/
+1756          /*                                                                          */
+1757          /*  End of file.                                                            */
+1758          /*                                                                          */
+1759          /****************************************************************************/
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   5248    ----
+   CONSTANT SIZE    =     60    ----
+   XDATA SIZE       =   ----     276
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

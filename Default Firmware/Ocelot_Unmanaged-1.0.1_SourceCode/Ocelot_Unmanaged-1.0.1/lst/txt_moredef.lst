@@ -1,0 +1,408 @@
+C51 COMPILER V9.60.0.0   TXT_MOREDEF                                                       11/30/2021 16:22:23 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE TXT_MOREDEF
+OBJECT MODULE PLACED IN ..\obj\txt_moredef.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\cli\txt_moredef.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\w
+                    -inbond;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vt
+                    -ss_api\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;.
+                    -.\src\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTE
+                    -ND PRINT(..\lst\txt_moredef.lst) TABS(2) OBJECT(..\obj\txt_moredef.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"
+  26          #include "swconf.h"
+  27          #include "txt_moredef.h"
+  28          
+  29          
+  30          /* ************************************************************************ **
+  31           *
+  32           *
+  33           * cmd texts
+  34           *
+  35           *
+  36           *
+  37           * ************************************************************************ */
+  38          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+  39          const char txt_CMD_TXT_NO_CONFIG [] = {"CONFIG"};
+  40          const char txt_CMD_TXT_NO_MAC [] = {"MAC"};
+  41          const char txt_CMD_TXT_NO_SAVE [] = {"SAVE"};
+  42          #endif // TRANSIT_UNMANAGED_SYS_MAC_CONF
+  43          
+  44          const char txt_CMD_TXT_NO_END [] = {"END"};
+  45          
+  46          
+  47          
+  48          const struct {
+  49              char *str_ptr;
+  50              uchar min_match;  /* Minimum number of characters that must be present */
+  51          } cmd_txt_tab [END_CMD_TXT] = {
+C51 COMPILER V9.60.0.0   TXT_MOREDEF                                                       11/30/2021 16:22:23 PAGE 2   
+
+  52          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+  53              txt_CMD_TXT_NO_CONFIG,                     6,
+  54              txt_CMD_TXT_NO_MAC,                        3,
+  55              txt_CMD_TXT_NO_SAVE,                       4,
+  56          #endif // TRANSIT_UNMANAGED_SYS_MAC_CONF
+  57              txt_CMD_TXT_NO_END,                        3,
+  58          };
+  59          
+  60          
+  61          
+  62          /* ************************************************************************ **
+  63           *
+  64           *
+  65           * std texts
+  66           *
+  67           *
+  68           *
+  69           * ************************************************************************ */
+  70          
+  71          #if defined(LUTON26_L25) || defined(LUTON26_L16) || defined(LUTON26_L10)
+              const char txt_TXT_NO_CHIP_NAME [] = {"SparX-III"};
+              #elif defined(VTSS_ARCH_OCELOT)
+  74          const char txt_TXT_NO_CHIP_NAME [] = {"Ferret"};
+  75          #endif
+  76          
+  77          
+  78          #if defined(LUTON26_L25)
+              const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - 25 Port Gigabit Ethernet Switch"};
+              #elif defined(LUTON26_L16)
+              const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - 16 Port Gigabit Ethernet Switch"};
+              #elif defined(LUTON26_L10)
+              const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - 10 Port Gigabit Ethernet Switch"};
+              #elif defined(FERRET_F11)
+              const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - 11 Port Gigabit Ethernet Switch"};
+              #elif defined(FERRET_F10P)
+              const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - 10 Port Gigabit Ethernet Switch"};
+              #elif defined(FERRET_F5)
+  89          const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - 5 Port Gigabit Ethernet Switch"};
+  90          #elif defined(FERRET_F4P)
+              const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - 4 Port Gigabit Ethernet Switch"};
+              #else
+              const char txt_TXT_NO_SWITCH_DESCRIPTION [] = {" - Unknown switch description"};
+              #endif // LUTON26_L25
+  95          
+  96          
+  97          #if defined(LUTON26_L25)
+              const char txt_TXT_NO_SWITCH_NAME [] = {"VSC7422 25 Port Switch"};
+              #elif defined(LUTON26_L16)
+              const char txt_TXT_NO_SWITCH_NAME [] = {"VSC7421 16 Port Switch"};
+              #elif defined(LUTON26_L10)
+              const char txt_TXT_NO_SWITCH_NAME [] = {"VSC7420 10 Port Switch"};
+              #elif defined(FERRET_F11)
+              const char txt_TXT_NO_SWITCH_NAME [] = {"VSC7412 11 Port Switch"};
+              #elif defined(FERRET_F10P)
+              const char txt_TXT_NO_SWITCH_NAME [] = {"VSC7412 10 Port Switch"};
+              #elif defined(FERRET_F5)
+ 108          const char txt_TXT_NO_SWITCH_NAME [] = {"VSC7411 5 Port Switch"};
+ 109          #elif defined(FERRET_F4P)
+              const char txt_TXT_NO_SWITCH_NAME [] = {"VSC7411 4 Port Switch"};
+              #else
+              const char txt_TXT_NO_SWITCH_NAME [] = {"Unknown switch name"};
+              #endif // LUTON26_L25
+C51 COMPILER V9.60.0.0   TXT_MOREDEF                                                       11/30/2021 16:22:23 PAGE 3   
+
+ 114          
+ 115          #if TRANSIT_LLDP
+              // const char txt_TXT_NO_LLDP_OPTIONAL_TLVS [] = {"Optional TLVs"};
+              const char txt_TXT_NO_LLDP_REMOTEMIB_HDR [] = {"Port    Chassis ID                Port ID                S
+             -ystem Name\r\n"};
+              const char txt_TXT_NO_LLDP_CHASSIS_ID [] = {"Chassis ID:"};
+              const char txt_TXT_NO_LLDP_CHASSIS_TYPE [] = {"Chassis Type:"};
+              const char txt_TXT_NO_LLDP_PORT_TYPE [] = {"Port Type:"};
+              const char txt_TXT_NO_LLDP_PORT_ID [] = {"Port ID"};
+              const char txt_TXT_NO_LLDP_SYSTEM_NAME [] = {"System Name:"};
+              const char txt_TXT_NO_LLDP_SYSTEM_DESCR [] = {"System Description:"};
+              const char txt_TXT_NO_LLDP_PORT_DESCR [] = {"Port Description:"};
+              const char txt_TXT_NO_LLDP_SYSTEM_CAPA [] = {"System Capabilities:"};
+              const char txt_TXT_NO_LLDP_MGMT_ADDR [] = {"Management Address:"};
+              // const char txt_TXT_NO_LLDP_STATHDR1 [] = {"         Tx           Recieved Frames                   TLVs
+             -"};
+              // const char txt_TXT_NO_LLDP_STATHDR2 [] = {"Port   Frames   Total   Errors   Discards   Discards   Unrec
+             -og.  Org.    Ageouts"};
+              
+              #if UNMANAGED_EEE_DEBUG_IF
+              const char txt_TXT_NO_EEE_STAT [] = {"    Tx_tw   Rx_tw   Fb Rx_tw   Echo Tx_tw   Echo Rx_tw   Resolved Tx
+             -   Resolved Rx\r\n"};
+              #endif //UNMANAGED_EEE_DEBUG_IF
+              
+              const char txt_TXT_NO_LLDP_NO_ENTRIES [] = {"No entries found"};
+              const char txt_TXT_NO_LLDP_LOCAL_PORT [] = {"Local port"};
+              #endif // TRANSIT_LLDP
+ 137          
+ 138          #if TRANSIT_VERIPHY
+              #if UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF
+              const char txt_TXT_NO_VERIPHY_OK [] = {"OK   "};
+              const char txt_TXT_NO_VERIPHY_OPEN [] = {"Open "};
+              const char txt_TXT_NO_VERIPHY_SHORT [] = {"Short"};
+              const char txt_TXT_NO_VERIPHY_ABNORMAL [] = {"Abnrm"};
+              const char txt_TXT_NO_VERIPHY_XA [] = {"XA   "};
+              const char txt_TXT_NO_VERIPHY_XB [] = {"XB   "};
+              const char txt_TXT_NO_VERIPHY_XC [] = {"XC   "};
+              const char txt_TXT_NO_VERIPHY_XD [] = {"XD   "};
+              const char txt_TXT_NO_VERIPHY_XCPLA [] = {"XCplA"};
+              const char txt_TXT_NO_VERIPHY_XCPLB [] = {"XCplB"};
+              const char txt_TXT_NO_VERIPHY_XCPLC [] = {"XCplC"};
+              const char txt_TXT_NO_VERIPHY_XCPLD [] = {"XCplD"};
+              const char txt_TXT_NO_VERIPHY_FAULT [] = {"Fault"};
+              const char txt_TXT_NO_VERIPHY_STAT_HDR [] = {"Port  Valid  LenA  LenB  LenC  LenD  StatA  StatB  StatC  St
+             -atD\r\n"};
+              const char txt_TXT_NO_VERIPHY_PROPER [] = {"Proper"};
+              const char txt_TXT_NO_VERIPHY_ABNORMAL_WEB [] = {"Abnormal termination"};
+              const char txt_TXT_NO_VERIPHY_XPAIR_WEB [] = {"Cross-pair short to pair "};
+              const char txt_TXT_NO_VERIPHY_XPAIR_CPL_WEB [] = {"Abnormal cross-pair coupling with pair "};
+              #endif // UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF
+              #endif // TRANSIT_VERIPHY
+ 160          
+ 161          
+ 162          const char txt_TXT_NO_WRONG_CHIP_ID [] = {"Wrong Chip ID"};
+ 163          
+ 164          
+ 165          #if UNMANAGED_PORT_STATISTICS_IF
+ 166          const char txt_TXT_NO_RX_PREFIX [] = {"Rx "};
+ 167          const char txt_TXT_NO_TX_PREFIX [] = {"Tx "};
+ 168          const char txt_TXT_NO_PACKETS [] = {"Packets:"};
+ 169          const char txt_TXT_NO_OCTETS [] = {"Octets:"};
+ 170          const char txt_TXT_NO_HI_PACKETS [] = {"High Priority Packets:"};
+C51 COMPILER V9.60.0.0   TXT_MOREDEF                                                       11/30/2021 16:22:23 PAGE 4   
+
+ 171          const char txt_TXT_NO_LO_PACKETS [] = {"Low Priority Packets:"};
+ 172          const char txt_TXT_NO_BC_PACKETS [] = {"Broadcast:"};
+ 173          const char txt_TXT_NO_MC_PACKETS [] = {"Multicast:"};
+ 174          const char txt_TXT_NO_64_BYTES [] = {"64 Bytes:"};
+ 175          const char txt_TXT_NO_65_BYTES [] = {"65-127 Bytes:"};
+ 176          const char txt_TXT_NO_128_BYTES [] = {"128-255 Bytes:"};
+ 177          const char txt_TXT_NO_256_BYTES [] = {"256-511 Bytes:"};
+ 178          const char txt_TXT_NO_512_BYTES [] = {"512-1023 Bytes:"};
+ 179          const char txt_TXT_NO_1024_BYTES [] = {"1024- Bytes:"};
+ 180          const char txt_TXT_NO_CRC_ALIGN [] = {"CRC/Alignment:"};
+ 181          const char txt_TXT_NO_COLLISIONS [] = {"Collisions:"};
+ 182          const char txt_TXT_NO_UNDERSIZE [] = {"Undersize:"};
+ 183          const char txt_TXT_NO_DROPS [] = {"Drops:"};
+ 184          const char txt_TXT_NO_OVERSIZE [] = {"Oversize:"};
+ 185          const char txt_TXT_NO_FRAGMENTS [] = {"Fragments:"};
+ 186          const char txt_TXT_NO_JABBERS [] = {"Jabbers:"};
+ 187          const char txt_TXT_NO_CAT_DROPS [] = {"Classifier Drops:"};
+ 188          const char txt_TXT_NO_RX_TOTAL [] = {"Receive Total"};
+ 189          const char txt_TXT_NO_TX_TOTAL [] = {"Transmit Total"};
+ 190          const char txt_TXT_NO_RX_SIZE [] = {"Receive Size Counters"};
+ 191          const char txt_TXT_NO_TX_SIZE [] = {"Transmit Size Counters"};
+ 192          const char txt_TXT_NO_RX_ERROR [] = {"Receive Error Counters"};
+ 193          const char txt_TXT_NO_TX_ERROR [] = {"Transmit Error Counters"};
+ 194          const char txt_TXT_NO_BM_PACKETS [] = {"Broad- and Multicast"};
+ 195          const char txt_TXT_NO_ERR_PACKETS [] = {"Error Packets"};
+ 196          const char txt_TXT_NO_OVERFLOW [] = {"Overflow:"};
+ 197          const char txt_TXT_NO_AGED [] = {"Aged:"};
+ 198          const char txt_TXT_NO_PAUSE [] = {"Pause:"};
+ 199          const char txt_TXT_NO_MAC_CTRL [] = {"MAC Ctrl:"};
+ 200          const char txt_TXT_NO_DASH [] = {"-"};
+ 201          
+ 202          #if UNMANAGED_PORT_STATISTICS_QOS
+              const char txt_TXT_NO_RX_QOS []       = {"Receive QoS Counters"};
+              const char txt_TXT_NO_TX_QOS []       = {"Transmit QoS Counters"};
+              const char txt_TXT_NO_RED_PRIO_0[]    = {"Red PRIO_0"};
+              const char txt_TXT_NO_RED_PRIO_1[]    = {"Red PRIO_1"};
+              const char txt_TXT_NO_RED_PRIO_2[]    = {"Red PRIO_2"};
+              const char txt_TXT_NO_RED_PRIO_3[]    = {"Red PRIO_3"};
+              const char txt_TXT_NO_RED_PRIO_4[]    = {"Red PRIO_4"};
+              const char txt_TXT_NO_RED_PRIO_5[]    = {"Red PRIO_5"};
+              const char txt_TXT_NO_RED_PRIO_6[]    = {"Red PRIO_6"};
+              const char txt_TXT_NO_RED_PRIO_7[]    = {"Red PRIO_7"};
+              const char txt_TXT_NO_YELLOW_PRIO_0[] = {"Yellow PRIO_0"};
+              const char txt_TXT_NO_YELLOW_PRIO_1[] = {"Yellow PRIO_1"};
+              const char txt_TXT_NO_YELLOW_PRIO_2[] = {"Yellow PRIO_2"};
+              const char txt_TXT_NO_YELLOW_PRIO_3[] = {"Yellow PRIO_3"};
+              const char txt_TXT_NO_YELLOW_PRIO_4[] = {"Yellow PRIO_4"};
+              const char txt_TXT_NO_YELLOW_PRIO_5[] = {"Yellow PRIO_5"};
+              const char txt_TXT_NO_YELLOW_PRIO_6[] = {"Yellow PRIO_6"};
+              const char txt_TXT_NO_YELLOW_PRIO_7[] = {"Yellow PRIO_7"};
+              const char txt_TXT_NO_GREEN_PRIO_0[]  = {"Green PRIO_0"};
+              const char txt_TXT_NO_GREEN_PRIO_1[]  = {"Green PRIO_1"};
+              const char txt_TXT_NO_GREEN_PRIO_2[]  = {"Green PRIO_2"};
+              const char txt_TXT_NO_GREEN_PRIO_3[]  = {"Green PRIO_3"};
+              const char txt_TXT_NO_GREEN_PRIO_4[]  = {"Green PRIO_4"};
+              const char txt_TXT_NO_GREEN_PRIO_5[]  = {"Green PRIO_5"};
+              const char txt_TXT_NO_GREEN_PRIO_6[]  = {"Green PRIO_6"};
+              const char txt_TXT_NO_GREEN_PRIO_7[]  = {"Green PRIO_7"};
+              #endif // UNMANAGED_PORT_STATISTICS_QOS
+ 230          #endif // UNMANAGED_PORT_STATISTICS_IF
+ 231          
+ 232          
+C51 COMPILER V9.60.0.0   TXT_MOREDEF                                                       11/30/2021 16:22:23 PAGE 5   
+
+ 233          const char txt_TXT_NO_TEMPERATURE [] = {"Temperature"};
+ 234          const char txt_TXT_NO_COMPILE_DATE [] = {"Compile Date: "};
+ 235          
+ 236          
+ 237          const struct {
+ 238              char *str_ptr;
+ 239          } std_txt_tab [END_STD_TXT] = {
+ 240          #if TRANSIT_LLDP
+                  txt_TXT_NO_CHIP_NAME,
+              #if defined(VTSS_ARCH_LUTON26)
+                  txt_TXT_NO_SWITCH_DESCRIPTION,
+                  txt_TXT_NO_SWITCH_NAME,
+              #endif
+              #if UNMANAGED_LLDP_DEBUG_IF
+              #if 0
+                  txt_TXT_NO_LLDP_OPTIONAL_TLVS,
+              #endif
+                  txt_TXT_NO_LLDP_REMOTEMIB_HDR,
+                  txt_TXT_NO_LLDP_CHASSIS_ID,
+                  txt_TXT_NO_LLDP_CHASSIS_TYPE,
+                  txt_TXT_NO_LLDP_PORT_TYPE,
+                  txt_TXT_NO_LLDP_PORT_ID,
+                  txt_TXT_NO_LLDP_SYSTEM_NAME,
+                  txt_TXT_NO_LLDP_SYSTEM_DESCR,
+                  txt_TXT_NO_LLDP_PORT_DESCR,
+                  txt_TXT_NO_LLDP_SYSTEM_CAPA,
+                  txt_TXT_NO_LLDP_MGMT_ADDR,
+              #if 0
+                  txt_TXT_NO_LLDP_STATHDR1,
+                  txt_TXT_NO_LLDP_STATHDR2,
+              #endif
+              #if UNMANAGED_EEE_DEBUG_IF
+                  txt_TXT_NO_EEE_STAT,
+              #endif
+                  txt_TXT_NO_LLDP_NO_ENTRIES,
+                  txt_TXT_NO_LLDP_LOCAL_PORT,
+              #endif
+              #endif /* TRANSIT_LLDP */
+ 271          
+ 272          #if TRANSIT_VERIPHY
+              #if UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF
+                  txt_TXT_NO_VERIPHY_OK,
+                  txt_TXT_NO_VERIPHY_OPEN,
+                  txt_TXT_NO_VERIPHY_SHORT,
+                  txt_TXT_NO_VERIPHY_ABNORMAL,
+                  txt_TXT_NO_VERIPHY_XA,
+                  txt_TXT_NO_VERIPHY_XB,
+                  txt_TXT_NO_VERIPHY_XC,
+                  txt_TXT_NO_VERIPHY_XD,
+                  txt_TXT_NO_VERIPHY_XCPLA,
+                  txt_TXT_NO_VERIPHY_XCPLB,
+                  txt_TXT_NO_VERIPHY_XCPLC,
+                  txt_TXT_NO_VERIPHY_XCPLD,
+                  txt_TXT_NO_VERIPHY_FAULT,
+                  txt_TXT_NO_VERIPHY_STAT_HDR,
+                  txt_TXT_NO_VERIPHY_PROPER,
+                  txt_TXT_NO_VERIPHY_ABNORMAL_WEB,
+                  txt_TXT_NO_VERIPHY_XPAIR_WEB,
+                  txt_TXT_NO_VERIPHY_XPAIR_CPL_WEB,
+              #endif
+              #endif
+ 294              txt_TXT_NO_WRONG_CHIP_ID,
+C51 COMPILER V9.60.0.0   TXT_MOREDEF                                                       11/30/2021 16:22:23 PAGE 6   
+
+ 295          #if UNMANAGED_PORT_STATISTICS_IF
+ 296              txt_TXT_NO_RX_PREFIX,
+ 297              txt_TXT_NO_TX_PREFIX,
+ 298              txt_TXT_NO_PACKETS,
+ 299              txt_TXT_NO_OCTETS,
+ 300              txt_TXT_NO_HI_PACKETS,
+ 301              txt_TXT_NO_LO_PACKETS,
+ 302              txt_TXT_NO_BC_PACKETS,
+ 303              txt_TXT_NO_MC_PACKETS,
+ 304              txt_TXT_NO_64_BYTES,
+ 305              txt_TXT_NO_65_BYTES,
+ 306              txt_TXT_NO_128_BYTES,
+ 307              txt_TXT_NO_256_BYTES,
+ 308              txt_TXT_NO_512_BYTES,
+ 309              txt_TXT_NO_1024_BYTES,
+ 310              txt_TXT_NO_CRC_ALIGN,
+ 311              txt_TXT_NO_COLLISIONS,
+ 312              txt_TXT_NO_UNDERSIZE,
+ 313              txt_TXT_NO_DROPS,
+ 314              txt_TXT_NO_OVERSIZE,
+ 315              txt_TXT_NO_FRAGMENTS,
+ 316              txt_TXT_NO_JABBERS,
+ 317              txt_TXT_NO_CAT_DROPS,
+ 318              txt_TXT_NO_RX_TOTAL,
+ 319              txt_TXT_NO_TX_TOTAL,
+ 320              txt_TXT_NO_RX_SIZE,
+ 321              txt_TXT_NO_TX_SIZE,
+ 322              txt_TXT_NO_RX_ERROR,
+ 323              txt_TXT_NO_TX_ERROR,
+ 324              txt_TXT_NO_BM_PACKETS,
+ 325              txt_TXT_NO_ERR_PACKETS,
+ 326              txt_TXT_NO_OVERFLOW,
+ 327              txt_TXT_NO_AGED,
+ 328              txt_TXT_NO_PAUSE,
+ 329              txt_TXT_NO_MAC_CTRL,
+ 330              txt_TXT_NO_DASH,
+ 331          
+ 332          #if UNMANAGED_PORT_STATISTICS_QOS
+                  txt_TXT_NO_RX_QOS,
+                  txt_TXT_NO_TX_QOS,
+                  txt_TXT_NO_RED_PRIO_0,
+                  txt_TXT_NO_RED_PRIO_1,
+                  txt_TXT_NO_RED_PRIO_2,
+                  txt_TXT_NO_RED_PRIO_3,
+                  txt_TXT_NO_RED_PRIO_4,
+                  txt_TXT_NO_RED_PRIO_5,
+                  txt_TXT_NO_RED_PRIO_6,
+                  txt_TXT_NO_RED_PRIO_7,
+                  txt_TXT_NO_YELLOW_PRIO_0,
+                  txt_TXT_NO_YELLOW_PRIO_1,
+                  txt_TXT_NO_YELLOW_PRIO_2,
+                  txt_TXT_NO_YELLOW_PRIO_3,
+                  txt_TXT_NO_YELLOW_PRIO_4,
+                  txt_TXT_NO_YELLOW_PRIO_5,
+                  txt_TXT_NO_YELLOW_PRIO_6,
+                  txt_TXT_NO_YELLOW_PRIO_7,
+                  txt_TXT_NO_GREEN_PRIO_0,
+                  txt_TXT_NO_GREEN_PRIO_1,
+                  txt_TXT_NO_GREEN_PRIO_2,
+                  txt_TXT_NO_GREEN_PRIO_3,
+                  txt_TXT_NO_GREEN_PRIO_4,
+                  txt_TXT_NO_GREEN_PRIO_5,
+C51 COMPILER V9.60.0.0   TXT_MOREDEF                                                       11/30/2021 16:22:23 PAGE 7   
+
+                  txt_TXT_NO_GREEN_PRIO_6,
+                  txt_TXT_NO_GREEN_PRIO_7,
+              #endif // UNMANAGED_PORT_STATISTICS_QOS
+ 360          #endif // UNMANAGED_PORT_STATISTICS_IF
+ 361          
+ 362              txt_TXT_NO_TEMPERATURE,
+ 363              txt_TXT_NO_COMPILE_DATE,
+ 364          };
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   ----    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =    713    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

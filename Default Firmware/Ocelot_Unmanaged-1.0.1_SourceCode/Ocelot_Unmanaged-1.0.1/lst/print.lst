@@ -1,0 +1,855 @@
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE PRINT
+OBJECT MODULE PLACED IN ..\obj\print.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\cli\print.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbond
+                    -;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_api
+                    -\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src\
+                    -eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PRI
+                    -NT(..\lst\print.lst) TABS(2) OBJECT(..\obj\print.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include <string.h>
+  26          
+  27          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  28          #include "print.h"
+  29          #include "uartdrv.h"
+  30          #include "misc1.h"
+  31          #include "misc2.h"  // For TEST_PORT_BIT_MASK()/test_bit_32()
+  32          #include "hwport.h"
+  33          
+  34          #if TRANSIT_FTIME
+              #include "timer.h"
+              #endif
+  37          
+  38          #ifndef NO_DEBUG_IF
+  39          #include "txt_moredef.h"
+  40          
+  41          /*****************************************************************************
+  42           *
+  43           *
+  44           * Defines
+  45           *
+  46           *
+  47           *
+  48           ****************************************************************************/
+  49          
+  50          #define LEFT  0
+  51          #define RIGHT 1
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 2   
+
+  52          
+  53          #if TRANSIT_FTIME
+              #define ONE_DAY     ( 24 * 60 * 60 )
+              #define TEN_HOURS   ( 10 * 60 * 60 )
+              #define ONE_HOUR    (      60 * 60 )
+              #define TEN_MINUTES (      10 * 60 )
+              #define ONE_MINUTE  (           60 )
+              #define TEN_SECONDS (           10 )
+              #define HUNDRED_MS  (          100 )
+              #define TEN_MS      (           10 )
+              #endif
+  63          
+  64          /*****************************************************************************
+  65           *
+  66           *
+  67           * Typedefs and enums
+  68           *
+  69           *
+  70           *
+  71           ****************************************************************************/
+  72          
+  73          /*****************************************************************************
+  74           *
+  75           *
+  76           * Prototypes for local functions
+  77           *
+  78           *
+  79           *
+  80           ****************************************************************************/
+  81          
+  82          static void print_dec_32 (ulong value, uchar adjust, uchar fieldwidth);
+  83          
+  84          /*****************************************************************************
+  85           *
+  86           *
+  87           * Local data
+  88           *
+  89           *
+  90           ****************************************************************************/
+  91          
+  92          #if TRANSIT_FTIME
+              struct timeb    g_delta_time;
+              #endif
+  95          
+  96          /*****************************************************************************
+  97           *
+  98           *
+  99           * Public Functions
+ 100           *
+ 101           *
+ 102           ****************************************************************************/
+ 103          
+ 104          /* ************************************************************************ */
+ 105          void print_str (const char *s)
+ 106          /* ------------------------------------------------------------------------ --
+ 107           * Purpose     : Print a 0-terminated string.
+ 108           * Remarks     : s points to string.
+ 109           * Restrictions:
+ 110           * See also    :
+ 111           * Example     :
+ 112           ****************************************************************************/
+ 113          {
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 3   
+
+ 114   1          while (*s != 0) {
+ 115   2              uart_put_byte(*s++);
+ 116   2          }
+ 117   1      }
+ 118          
+ 119          /* ************************************************************************ */
+ 120          void print_n_str (const char *s,uchar nchar_width)
+ 121          /* ------------------------------------------------------------------------ --
+ 122           * Purpose     : Print a 0-terminated string in n charecter width.
+ 123           * Remarks     : s points to string.
+ 124           * Restrictions:
+ 125           * See also    :
+ 126           * Example     :
+ 127           ****************************************************************************/
+ 128          {
+ 129   1          while ((*s != 0) || nchar_width) {
+ 130   2              if (*s == 0) {
+ 131   3                uart_put_byte(' ');
+ 132   3              } else {
+ 133   3                uart_put_byte(*s++);
+ 134   3              }
+ 135   2              nchar_width--;
+ 136   2          }
+ 137   1      }
+ 138          
+ 139          /* ************************************************************************ */
+ 140          void println_str (const char *s)
+ 141          /* ------------------------------------------------------------------------ --
+ 142           * Purpose     : Print a 0-terminated string.
+ 143           * Remarks     : s points to string.
+ 144           * Restrictions:
+ 145           * See also    :
+ 146           * Example     :
+ 147           ****************************************************************************/
+ 148          {
+ 149   1          print_str(s);
+ 150   1          print_cr_lf();
+ 151   1      }
+ 152          
+ 153          /* Show (32 bits) value with binary format
+ 154           * For example: 0000.0000.0000.0000.0000.0101.1110.1110
+ 155          */
+ 156          void print_binary_32(ulong value)
+ 157          {
+ 158   1          char idx;
+ 159   1      
+ 160   1          for (idx = 31; idx >= 0; idx--) {
+ 161   2              uart_put_byte((value & VTSS_BIT(idx)) ? '1' : '0');
+ 162   2              if (idx &&!(idx % 4)) {
+ 163   3                  uart_put_byte('.');
+ 164   3              }
+ 165   2          }
+ 166   1      }
+ 167          
+ 168          /* Show (32 bits) value with various formats (Hex/Decimal/Binary)
+ 169           * For example:
+ 170           * Hex        Decimal    31     24 23     16 15      8 7       0
+ 171           * ---------- ---------- --------- --------- --------- ---------
+ 172           * 0x000005ee       1518 0000.0000.0000.0000.0000.0101.1110.1110
+ 173          */
+ 174          void print_parse_info_32(ulong reg_val)
+ 175          {
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 4   
+
+ 176   1          /* Target and offset as parameter */
+ 177   1          print_str("Hex        Decimal    31     24 23     16 15      8 7       0");
+ 178   1          print_cr_lf();
+ 179   1          print_str("---------- ---------- --------- --------- --------- ---------");
+ 180   1          print_cr_lf();
+ 181   1          
+ 182   1          // Hex
+ 183   1          print_hex_prefix();
+ 184   1          print_hex_dw(reg_val);
+ 185   1          print_spaces(1);
+ 186   1          
+ 187   1          // Decimal
+ 188   1          print_dec_right(reg_val);
+ 189   1          print_spaces(1);
+ 190   1          
+ 191   1          // Binary
+ 192   1          print_binary_32(reg_val);
+ 193   1          print_cr_lf();
+ 194   1      }
+ 195          
+ 196          /* ************************************************************************ */
+ 197          void print_hex_b (uchar value)
+ 198          /* ------------------------------------------------------------------------ --
+ 199           * Purpose     : Print value of a byte as 2 hex nibbles.
+ 200           * Remarks     : value holds byte value to print.
+ 201           * Restrictions:
+ 202           * See also    :
+ 203           * Example     :
+ 204           ****************************************************************************/
+ 205          {
+ 206   1          uart_put_byte(hex_to_ascii_nib(value >> 4));
+ 207   1          uart_put_byte(hex_to_ascii_nib(value & 0x0f));
+ 208   1      }
+ 209          
+ 210          /* ************************************************************************ */
+ 211          void print_hex_w (ushort value)
+ 212          /* ------------------------------------------------------------------------ --
+ 213           * Purpose     : Print value of a word (16-bit integer) as 4 hex nibbles.
+ 214           * Remarks     : value holds word value to print.
+ 215           * Restrictions:
+ 216           * See also    :
+ 217           * Example     :
+ 218           ****************************************************************************/
+ 219          {
+ 220   1          print_hex_b(value >> 8);
+ 221   1          print_hex_b(value & 0xff);
+ 222   1      }
+ 223          
+ 224          /* ************************************************************************ */
+ 225          void print_hex_dw (ulong value)
+ 226          /* ------------------------------------------------------------------------ --
+ 227           * Purpose     : Print value of a dword (32-bit integer) as 8 hex nibbles.
+ 228           * Remarks     : value holds dword value to print.
+ 229           * Restrictions:
+ 230           * See also    :
+ 231           * Example     :
+ 232           ****************************************************************************/
+ 233          {
+ 234   1          print_hex_w(value >> 16);
+ 235   1          print_hex_w(value & 0xffff);
+ 236   1      }
+ 237          
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 5   
+
+ 238          #if !defined(BRINGUP)
+ 239          /* ************************************************************************ */
+ 240          void print_dec (ulong value)
+ 241          /* ------------------------------------------------------------------------ --
+ 242           * Purpose     : Print value of a dword (32-bit integer) as a decimal number.
+ 243           * Remarks     : value holds dword value to print.
+ 244           * Restrictions:
+ 245           * See also    :
+ 246           * Example     :
+ 247           ****************************************************************************/
+ 248          {
+ 249   1          uchar buf [10];
+ 250   1          uchar no_of_digits;
+ 251   1      
+ 252   1          /* Determine number of significant digits and isolate digits */
+ 253   1          no_of_digits = 0;
+ 254   1          while (value > 0) {
+ 255   2              buf[no_of_digits] = value % 10;
+ 256   2              value = value / 10;
+ 257   2              no_of_digits++;
+ 258   2          }
+ 259   1      
+ 260   1          /* Print each significant digit */
+ 261   1          if (no_of_digits == 0) {
+ 262   2              uart_put_byte('0');
+ 263   2          } else {
+ 264   2              no_of_digits--;
+ 265   2              while (no_of_digits != 0xff) {
+ 266   3                  uart_put_byte(buf[no_of_digits] + '0');
+ 267   3                  no_of_digits--;
+ 268   3              }
+ 269   2          }
+ 270   1      }
+ 271          
+ 272          #ifndef UNMANAGED_REDUCED_DEBUG_IF
+ 273          /* ************************************************************************ */
+ 274          void print_dec_8_right_2 (uchar value)
+ 275          /* ------------------------------------------------------------------------ --
+ 276           * Purpose     : Print value of a byte as a 2-digit decimal number.
+ 277           * Remarks     : value holds byte value to print.
+ 278           * Restrictions: Value may not exceed 99.
+ 279           * See also    :
+ 280           * Example     :
+ 281           ****************************************************************************/
+ 282          {
+ 283   1          if (value > 9) {
+ 284   2              uart_put_byte(((value / 10) % 10) + '0');
+ 285   2          } else {
+ 286   2              uart_put_byte(' ');
+ 287   2          }
+ 288   1          uart_put_byte((value % 10) + '0');
+ 289   1      }
+ 290          #endif
+ 291          #endif /* BRINGUP */
+ 292          
+ 293          #if UNMANAGED_PORT_STATISTICS_IF  || UNMANAGED_PORT_MAPPINGS
+ 294          /* ************************************************************************ */
+ 295          void print_dec_right (ulong value)
+ 296          /* ------------------------------------------------------------------------ --
+ 297           * Purpose     : Print value of a dword (32-bit integer) as a decimal number
+ 298           *               right adjusted in a 10-char field.
+ 299           * Remarks     : value holds dword value to print.
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 6   
+
+ 300           * Restrictions:
+ 301           * See also    :
+ 302           * Example     :
+ 303           ****************************************************************************/
+ 304          {
+ 305   1          print_dec_32(value, RIGHT, 10);
+ 306   1      }
+ 307          #endif
+ 308          
+ 309          
+ 310          #if UNMANAGED_EEE_DEBUG_IF
+              /* ************************************************************************ */
+              void print_dec_nright (ulong value, uchar fieldwidth)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Print value of a dword (32-bit integer) as a decimal number
+               *               right adjusted in a <fieldwidth>-char field.
+               * Remarks     : value holds dword value to print.
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  print_dec_32(value, RIGHT, fieldwidth);
+              }
+              #endif
+ 325          
+ 326          #if TRANSIT_VERIPHY || TRANSIT_FAN_CONTROL
+              #if UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF || UNMANAGED_FAN_DEBUG_IF
+              void print_dec_16_right (ushort value, uchar width)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Print value of a word (16-bit integer) as a decimal number
+               *               right adjusted in a field with width specified by parameter.
+               * Remarks     : value holds word value to print. width specifies width of
+               *               field (range 1-5).
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  uchar str [5];
+                  uchar j;
+              
+                  if (width > 5) {
+                      width = 5;
+                  } else if (width == 0) {
+                      width = 1;
+                  }
+              
+                  str[0] = '0';
+                  memset(&str[1], ' ', 4);
+              
+                  j = 0;
+                  while (value != 0) {
+                      str[j] = (value % 10) + '0';
+                      value /= 10;
+                      j++;
+                  }
+              
+                  while (width-- > 0) {
+                      uart_put_byte(str[width]);
+                  }
+              }
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 7   
+
+              #endif
+              #endif
+ 364          
+ 365          /* ************************************************************************ */
+ 366          void print_hex_prefix (void)
+ 367          /* ------------------------------------------------------------------------ --
+ 368           * Purpose     : Print a hex prefix, i.e. print "0x".
+ 369           * Remarks     :
+ 370           * Restrictions:
+ 371           * See also    :
+ 372           * Example     :
+ 373           ****************************************************************************/
+ 374          {
+ 375   1          uart_put_byte('0');
+ 376   1          uart_put_byte('x');
+ 377   1      }
+ 378          
+ 379          /* ************************************************************************ */
+ 380          void print_cr_lf (void)
+ 381          /* ------------------------------------------------------------------------ --
+ 382           * Purpose     : Print a <CR> (0x0d) and a <LF> (0x0a).
+ 383           * Remarks     :
+ 384           * Restrictions:
+ 385           * See also    :
+ 386           * Example     :
+ 387           ****************************************************************************/
+ 388          {
+ 389   1          uart_put_byte('\r');
+ 390   1          uart_put_byte('\n');
+ 391   1      }
+ 392          
+ 393          /* ************************************************************************ */
+ 394          void print_ch (uchar ch)
+ 395          /* ------------------------------------------------------------------------ --
+ 396           * Purpose     : Print a single char.
+ 397           * Remarks     : ch holds char to print in ASCII format.
+ 398           * Restrictions:
+ 399           * See also    :
+ 400           * Example     :
+ 401           ****************************************************************************/
+ 402          {
+ 403   1          uart_put_byte(ch);
+ 404   1      }
+ 405          
+ 406          #if !defined(BRINGUP)
+ 407          #ifndef UNMANAGED_REDUCED_DEBUG_IF
+ 408          /* ************************************************************************ */
+ 409          void print_spaces (uchar count)
+ 410          /* ------------------------------------------------------------------------ --
+ 411           * Purpose     : Print a specified number of spaces.
+ 412           * Remarks     : count holds number of spaces to print.
+ 413           * Restrictions:
+ 414           * See also    :
+ 415           * Example     :
+ 416           ****************************************************************************/
+ 417          {
+ 418   1          while (count-- > 0) {
+ 419   2              uart_put_byte(' ');
+ 420   2          }
+ 421   1      }
+ 422          #endif
+ 423          #endif /* BRINGUP */
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 8   
+
+ 424          
+ 425          #if UNMANAGED_LLDP_DEBUG_IF
+              /* ************************************************************************ */
+              void print_ip_addr (const uchar xdata *ip_addr)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Print ip address in format xxx.xxx.xxx.xxx.
+               * Remarks     : ip_addr points to a 4-byte array holding ip address.
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  uchar j;
+              
+                  for (j = 0; j < 4; j++) {
+                      print_dec(*ip_addr++);
+                      if (j < 3) {
+                          print_ch('.');
+                      }
+                  }
+              }
+              #endif
+ 446          
+ 447          #if !defined(BRINGUP)
+ 448          /* ************************************************************************ */
+ 449          void print_mac_addr (const uchar *mac_addr)
+ 450          /* ------------------------------------------------------------------------ --
+ 451           * Purpose     : Print mac address in format xx-xx-xx-xx-xx-xx.
+ 452           * Remarks     : mac_addr points to a 6-byte array holding mac address.
+ 453           * Restrictions:
+ 454           * See also    :
+ 455           * Example     :
+ 456           ****************************************************************************/
+ 457          {
+ 458   1          uchar j;
+ 459   1      
+ 460   1          for (j = 0; j < 6; j++) {
+ 461   2              print_hex_b(*mac_addr++);
+ 462   2              if (j < 5) {
+ 463   3                  print_ch('-');
+ 464   3              }
+ 465   2          }
+ 466   1      }
+ 467          
+ 468          #ifndef UNMANAGED_REDUCED_DEBUG_IF
+ 469          /* ************************************************************************ */
+ 470          void print_port_mac_addr (uchar port_no)
+ 471          /* ------------------------------------------------------------------------ --
+ 472           * Purpose     : Print mac address for the specified port in format
+ 473           *               xx-xx-xx-xx-xx-xx.
+ 474           * Remarks     :
+ 475           * Restrictions:
+ 476           * See also    :
+ 477           * Example     :
+ 478           ****************************************************************************/
+ 479          {
+ 480   1          mac_addr_t mac_addr;
+ 481   1      
+ 482   1          get_mac_addr(port_no, mac_addr);
+ 483   1          print_mac_addr(mac_addr);
+ 484   1      }
+ 485          #endif
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 9   
+
+ 486          #endif /* BRINGUP */
+ 487          
+ 488          /* ************************************************************************ */
+ 489          
+ 490          void print_line (uchar width)
+ 491          /* ------------------------------------------------------------------------ --
+ 492           * Purpose     : Print a line ('-') with specified width.
+ 493           * Remarks     :
+ 494           * Restrictions:
+ 495           * See also    :
+ 496           * Example     :
+ 497           ****************************************************************************/
+ 498          {
+ 499   1          while (width > 0) {
+ 500   2              uart_put_byte('-');
+ 501   2              width--;
+ 502   2          }
+ 503   1      }
+ 504          
+ 505          #if UNMANAGED_EEE_DEBUG_IF || UNMANAGED_PORT_STATISTICS_IF || UNMANAGED_PORT_MAPPINGS
+ 506          /* ************************************************************************ */
+ 507          static void print_dec_32 (ulong value, uchar adjust, uchar fieldwidth)
+ 508          /* ------------------------------------------------------------------------ --
+ 509           * Purpose     : Print a 32-bit decimal value either left adjusted with no
+ 510           *               trailing spaces or right adjusted in a 10-char field with
+ 511           *               spaces in front.
+ 512           * Remarks     :
+ 513           * Restrictions:
+ 514           * See also    :
+ 515           * Example     :
+ 516           ****************************************************************************/
+ 517          {
+ 518   1          uchar buf [10];
+ 519   1          uchar no_of_digits;
+ 520   1      
+ 521   1          while(fieldwidth > 10) {
+ 522   2              uart_put_byte(' ');
+ 523   2              fieldwidth--;
+ 524   2          };
+ 525   1      
+ 526   1          memset(buf, ' ', sizeof(buf));
+ 527   1      
+ 528   1          /* Determine number of significant digits and isolate digits */
+ 529   1          no_of_digits = 0;
+ 530   1          while (value > 0) {
+ 531   2              buf[no_of_digits] = (value % 10) + '0';
+ 532   2              value = value / 10;
+ 533   2              no_of_digits++;
+ 534   2          }
+ 535   1      
+ 536   1          if (no_of_digits == 0) {
+ 537   2              buf[0] = '0';
+ 538   2              no_of_digits = 1;
+ 539   2          }
+ 540   1      
+ 541   1          if (adjust == RIGHT) {
+ 542   2              no_of_digits = fieldwidth;
+ 543   2          }
+ 544   1      
+ 545   1          while (no_of_digits-- > 0) {
+ 546   2              uart_put_byte(buf[no_of_digits]);
+ 547   2          }
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 10  
+
+ 548   1      }
+ 549          #endif
+ 550          
+ 551          #endif
+ 552          
+ 553          #if TRANSIT_FTIME
+              void print_uptime(void)
+              {
+                  uchar           buf[13]; /* Buffer for: 12:34:56.789 */
+                  uchar           i = 0;
+                  struct timeb    t;
+              
+                  ftime(&t);
+              
+                  /* support less than 1 days */
+                  t.time = t.time % ONE_DAY;
+              
+                  /* [0-2]_:__:__.___ */
+                  buf[i]    = '0';
+                  buf[i++] += t.time / TEN_HOURS;
+                  t.time    = t.time % TEN_HOURS;
+              
+                  /* _[0-9]:__:__.___ */
+                  buf[i]    = '0';
+                  buf[i++] += t.time / ONE_HOUR;
+                  t.time    = t.time % ONE_HOUR;
+              
+                  buf[i++]  = ':';
+              
+                  /* __:[0-5]_:__.___ */
+                  buf[i]    = '0';
+                  buf[i++] += t.time / TEN_MINUTES;
+                  t.time    = t.time % TEN_MINUTES;
+              
+                  /* __:_[0-9]:__.___ */
+                  buf[i]    = '0';
+                  buf[i++] += t.time / ONE_MINUTE;
+                  t.time    = t.time % ONE_MINUTE;
+              
+                  buf[i++]  = ':';
+              
+                  /* __:__:[0-5]_.___ */
+                  buf[i]    = '0';
+                  buf[i++] += t.time / TEN_SECONDS;
+                  t.time    = t.time % TEN_SECONDS;
+              
+                  /* __:__:_[0-9].___ */
+                  buf[i]    = '0';
+                  buf[i++] += t.time;
+              
+                  buf[i++]  = '.';
+              
+                  /* __:__:__.[0-9]__ */
+                  buf[i]     = '0';
+                  buf[i++]  += t.millitm / HUNDRED_MS;
+                  t.millitm  = t.millitm % HUNDRED_MS;
+              
+                  /* __:__:__._[0-9]_ */
+                  buf[i]     = '0';
+                  buf[i++]  += t.millitm / TEN_MS;
+                  t.millitm  = t.millitm % TEN_MS;
+              
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 11  
+
+                  /* __:__:__.__[0-9] */
+                  buf[i]     = '0';
+                  buf[i++]  += t.millitm;
+              
+                  buf[i]    = 0; /* NULL-terminator */
+              
+                  print_str(buf);
+              }
+              
+              void print_delta(uchar check)
+              {
+                  if (check == 0)
+                      ftime(&g_delta_time);
+                  else {
+                      struct timeb    t;
+                      u16             delta;
+              
+                      ftime(&t);
+              
+                      delta  = (t.time - g_delta_time.time) * 1000;
+              
+                      if (t.millitm >= g_delta_time.millitm)
+                          delta += t.millitm - g_delta_time.millitm;
+                      else
+                          delta -= g_delta_time.millitm - t.millitm;
+              
+                      g_delta_time = t;
+              
+                      if (delta) {
+                          print_str("check");
+                          print_ch ('0' + check);
+                          print_str(": ");
+                          print_dec(delta);
+                          print_cr_lf();
+                      }
+                  }
+              }
+              #endif /* TRANSIT_FTIME */
+ 648          
+ 649          #if defined(DEBUG_PRINTF_ENABLE)
+              static void print_unsigned(unsigned v)
+              {
+                  uchar buf[6];
+                  uchar i;
+              
+                  if (v == 0) {
+                      print_ch('0');
+                      return;
+                  }
+                  i = 0;
+                  while (v) {
+                      buf[i++] = ('0' + (v % 10));
+                      v /= 10;
+                  }
+                  while (i--)
+                      print_ch(buf[i]);
+              }
+              
+              static void vtss_vprintf(const char *fmt, va_list ap)
+              {
+                  char *cp, *xp, ch;
+                  int fieldw = -1;
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 12  
+
+                  bit hflg = 0, lflg = 0, nfw = 0;
+              
+                  for (cp = fmt; *cp; cp++) {
+                      ch = *cp;
+                      if (ch == '%') {
+                          lflg = hflg = 0;
+              morearg:
+                          ch = *++cp;
+                          switch (ch) {
+                          case 'l' :
+                              lflg = 1;
+                              goto morearg;
+                          case 'h' :
+                              hflg = 1;
+                              goto morearg;
+                          case '-' :
+                              nfw = 1;
+                              goto morearg;
+                          case '0' :
+                          case '1' :
+                          case '2' :
+                          case '3' :
+                          case '4' :
+                          case '5' :
+                          case '6' :
+                          case '7' :
+                          case '8' :
+                          case '9' :
+                              if (fieldw < 0) {
+                                  fieldw = 0;
+                              }
+                              fieldw = fieldw * 10 + (ch - '0');
+                              goto morearg;
+                          case 's' :
+                              xp = va_arg(ap, char *);
+                              print_str(xp);
+                              break;
+                          case 'u' :
+                              if (lflg) {
+                                  print_dec(va_arg(ap, ulong));
+                              } else {
+                                  print_unsigned(hflg ? va_arg(ap, uchar) : va_arg(ap, unsigned));
+                              }
+                              break;
+                          case 'd' :
+                              if (lflg) {
+                                  long dv = va_arg(ap, long);
+                                  if (dv < 0) {
+                                      print_ch('-');
+                                      dv = -dv;
+                                  }
+                                  print_dec(dv);
+                              } else {
+                                  int dv = hflg ? va_arg(ap, char) : va_arg(ap, int);
+                                  if (dv < 0) {
+                                      print_ch('-');
+                                      dv = -dv;
+                                  }
+                                  print_unsigned(dv);
+                              }
+                              break;
+                          case 'x' :
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 13  
+
+                              if (lflg) {
+                                  print_hex_dw(va_arg(ap, ulong));
+                              } else if (hflg) {
+                                  print_hex_b(va_arg(ap, uchar));
+                              } else {
+                                  print_hex_w(va_arg(ap, ushort));
+                              }
+                              break;
+                          case 'c' :
+                              print_ch(va_arg(ap, char));
+                              break;
+                          case '\0' :
+                              cp--;
+                              /*FALLTHROUGH*/
+                          case '%' :
+                              print_ch('%');
+                              break;
+                          default :
+                              print_ch('%');
+                              print_ch(ch);
+                              break;
+                          }
+                      } else {
+                          if (ch == '\r' && cp[1] != '\n')
+                              print_ch(ch);
+                          else if (ch == '\n')
+                              print_cr_lf();
+                          else
+                              print_ch(ch);
+                      }
+                  }
+              }
+              
+              void debug_printf(const char *fmt, ...)
+              {
+                  va_list ap;
+              
+                  va_start(ap, fmt);
+                  vtss_vprintf(fmt, ap);
+                  va_end(ap);
+              }
+              #endif // DEBUG_PRINTF_ENABLE
+ 776          
+ 777          #if TRANSIT_UNMANAGED_MAC_OPER_GET
+ 778          void print_port_list(port_bit_mask_t port_mask)
+ 779          {
+ 780   1          uchar port_no;
+ 781   1          uchar first;
+ 782   1      
+ 783   1          if (port_mask == 0) {
+ 784   2              print_str("None"); /* None */
+ 785   2          } else {
+ 786   2              first = TRUE;
+ 787   2              for (port_no = 0; port_no <= NO_OF_CHIP_PORTS; port_no++) {
+ 788   3                  if (TEST_PORT_BIT_MASK(port_no, &port_mask)) {
+ 789   4                      if (!first) {
+ 790   5                          print_ch(',');
+ 791   5                      }
+ 792   4                      if (port_no == CPU_CHIP_PORT) {
+ 793   5                          print_ch('C');
+ 794   5                      } else {
+ 795   5                          print_dec(cport2uport(port_no));
+C51 COMPILER V9.60.0.0   PRINT                                                             11/30/2021 16:22:23 PAGE 14  
+
+ 796   5                      }
+ 797   4                      first = FALSE;
+ 798   4                  }
+ 799   3              }
+ 800   2          }
+ 801   1      }
+ 802          #endif // TRANSIT_UNMANAGED_MAC_OPER_GET
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1013    ----
+   CONSTANT SIZE    =    129    ----
+   XDATA SIZE       =   ----      74
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

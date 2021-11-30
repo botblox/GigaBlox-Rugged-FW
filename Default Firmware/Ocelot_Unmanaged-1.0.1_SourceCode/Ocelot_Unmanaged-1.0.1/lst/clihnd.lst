@@ -1,0 +1,2364 @@
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE CLIHND
+OBJECT MODULE PLACED IN ..\obj\clihnd.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\cli\clihnd.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbon
+                    -d;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_ap
+                    -i\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src
+                    -\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PR
+                    -INT(..\lst\clihnd.lst) TABS(2) OBJECT(..\obj\clihnd.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include <ctype.h>
+  26          #include <string.h>
+  27          
+  28          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  29          #include "sysutil.h"
+  30          #include "hwport.h"
+  31          #if TRANSIT_EEE
+              #include "eee_api.h"
+              #include "eee_base_api.h"
+              #endif
+  35          
+  36          #include "txt.h"
+  37          #include "h2io.h"
+  38          #include "uartdrv.h"
+  39          #include "main.h"
+  40          #include "print.h"
+  41          #include "h2.h"
+  42          #include "timer.h"
+  43          #include "phydrv.h"
+  44          #include "phymap.h"
+  45          #include "phytsk.h"
+  46          #include "phy_family.h"
+  47          #include "phy_base.h"
+  48          #include "txrxtst.h"
+  49          #include "misc1.h"
+  50          #include "clihnd.h"
+  51          #include "version.h"
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 2   
+
+  52          #include "spiflash.h"
+  53          #include "vtss_api_base_regs.h"
+  54          
+  55          #include "i2c_h.h"
+  56          #include "ledtsk.h"
+  57          #include "i2c.h"
+  58          #include "misc2.h"
+  59          #include "vtss_common_os.h"
+  60          #include "h2pcs1g.h"
+  61          #include "h2sdcfg.h"
+  62          
+  63          #if TRANSIT_EEE
+              #include "eee_api.h"
+              #include "eee_base_api.h"
+              #endif
+  67          
+  68          #if TRANSIT_FAN_CONTROL
+              #include "fan_api.h"
+              #endif
+  71          
+  72          #if TRANSIT_LLDP
+              #include "lldp_remote.h"
+              #include "lldp_tlv.h"
+              #include "h2txrx.h"
+              #endif
+  77          
+  78          #if TRANSIT_VERIPHY
+              #include "veriphy.h"
+              #endif
+  81          
+  82          #if UNMANAGED_PORT_STATISTICS_IF
+  83          #include "h2stats.h"
+  84          #endif
+  85          
+  86          #if TRANSIT_LAG
+              #include "h2aggr.h"
+              #endif
+  89          
+  90          #if TRANSIT_LACP
+              #include "vtss_lacp.h"
+              #endif
+  93          
+  94          #if TRANSIT_UNMANAGED_MAC_OPER_GET || TRANSIT_UNMANAGED_MAC_OPER_SET
+  95          #include "h2mactab.h"
+  96          #endif // TRANSIT_UNMANAGED_MAC_OPER_GET || TRANSIT_UNMANAGED_MAC_OPER_SET
+  97          
+  98          #if UNMANAGED_TCAM_DEBUG_IF
+              #include "h2tcam.h"
+              #endif
+ 101          #ifndef NO_DEBUG_IF
+ 102          
+ 103          /*****************************************************************************
+ 104           *
+ 105           *
+ 106           * Defines
+ 107           *
+ 108           *
+ 109           *
+ 110           ****************************************************************************/
+ 111          
+ 112          #define CLI_MAX_NO_OF_PARMS     4
+ 113          #define CLI_MAX_CMD_LEN         48
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 3   
+
+ 114          
+ 115          #define FORMAT_OK    0
+ 116          #define FORMAT_ERROR 1
+ 117          
+ 118          #if TRANSIT_EEE
+              #define EEE_WAKEUP_TIME_MAX 1000
+              #define EEE_WAKEUP_TIME_MIN 0
+              #endif
+ 122          
+ 123          /*****************************************************************************
+ 124           *
+ 125           *
+ 126           * Typedefs and enums
+ 127           *
+ 128           *
+ 129           *
+ 130           ****************************************************************************/
+ 131          
+ 132          typedef struct {
+ 133              uchar *str;
+ 134              uchar len;
+ 135          } str_parm_t;
+ 136          
+ 137          /*****************************************************************************
+ 138           *
+ 139           *
+ 140           * Prototypes for local functions
+ 141           *
+ 142           *
+ 143           *
+ 144           ****************************************************************************/
+ 145          
+ 146          static uchar handle_command (void);
+ 147          static void  cli_show_sw_ver(void);
+ 148          static uchar retrieve_parms (void);
+ 149          #if !defined(BRINGUP)
+ 150          static void cli_show_port_info(void);
+ 151          #endif
+ 152          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+ 153          static uchar retrieve_str_parms (void);
+ 154          #endif
+ 155          static void  skip_spaces (void);
+ 156          static uchar cmd_cmp (char *s1, char *s2) small;
+ 157          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+ 158          static uchar handle_sys_config (void);
+ 159          #endif
+ 160          #ifndef VTSS_COMMON_NDEBUG
+              static void update_debug_lvl(uchar lvl);
+              #endif
+ 163          #if TRANSIT_FAN_CONTROL
+              #if UNMANAGED_FAN_DEBUG_IF
+              static void handle_fan_control (void);
+              #endif
+              #endif
+ 168          #if TRANSIT_LLDP
+              #if UNMANAGED_LLDP_DEBUG_IF
+              static void cmd_print_lldp_remoteinfo (void);
+              #endif
+              #endif
+ 173          #if TRANSIT_VERIPHY
+              static void cmd_run_veriphy(vtss_iport_no_t iport);
+              #endif
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 4   
+
+ 176          #if TRANSIT_UNMANAGED_MAC_OPER_GET
+ 177          static void cli_show_mac_addr(vtss_cport_no_t chip_port);
+ 178          #endif // TRANSIT_UNMANAGED_MAC_OPER_GET
+ 179          
+ 180          /*****************************************************************************
+ 181           *
+ 182           *
+ 183           * Local data
+ 184           *
+ 185           *
+ 186           *
+ 187           ****************************************************************************/
+ 188          
+ 189          static ulong idata parms [CLI_MAX_NO_OF_PARMS];
+ 190          static str_parm_t str_parms [CLI_MAX_NO_OF_PARMS];
+ 191          static uchar parms_no;
+ 192          
+ 193          static uchar xdata cmd_buf [CLI_MAX_CMD_LEN];
+ 194          static uchar xdata *cmd_ptr;
+ 195          static uchar cmd_len = 0;
+ 196          
+ 197          /* Common Sequence Mnemonic */
+ 198          #define CLI_CTLC    0x03
+ 199          #define CLI_CTLD    0x04
+ 200          #define CLI_BEL     0x07
+ 201          #define CLI_CTLH    0x08
+ 202          #define CLI_BS      CLI_CTLH
+ 203          #define CLI_LF      0x0a
+ 204          #define CLI_CR      0x0d
+ 205          #define CLI_ESC     0x1b
+ 206          #define CLI_DEL     0x7f
+ 207          
+ 208          #define CLI_SEQUENCE_INDICATOR     0x5b  // [
+ 209          #define CLI_CURSOR_UP              0x41  // A
+ 210          #define CLI_CURSOR_DOWN            0x42  // B
+ 211          #define CLI_CURSOR_FORWARD         0x43  // C
+ 212          #define CLI_CURSOR_BACKWARD        0x44  // D
+ 213          
+ 214          /* Control Sequence Introducer (CSI)
+ 215           * An escape sequence that provides supplementary controls and is itself a
+ 216           * prefix affecting the interpretation of a limited number of contiguous
+ 217           * characters. In the VT100 the CSI is ESC [. */
+ 218          #define CLI_CSI_1   CLI_ESC /* First character of CSI */
+ 219          #define CLI_CSI_2   0x5b    /* Second character of CSI */
+ 220          #define CLI_CUF     0x43    /* Cursor Forward, Sequence: Escape [ C */
+ 221          #define CLI_CUB     0x44    /* Cursor Backward, Sequence: Escape [ D */
+ 222          #define CLI_EL      0x4B    /* Erase in Line, Sequence: Escape [ K */
+ 223          
+ 224          
+ 225          /* ************************************************************************ */
+ 226          void cli_tsk (void)
+ 227          /* ------------------------------------------------------------------------ --
+ 228           * Purpose     : Handle command line interface.
+ 229           * Remarks     :
+ 230           * Restrictions:
+ 231           * See also    :
+ 232           * Example     :
+ 233           ****************************************************************************/
+ 234          {
+ 235   1          uchar error_status;
+ 236   1      
+ 237   1          if (cmd_ready()) {
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 5   
+
+ 238   2              cmd_ptr = &cmd_buf[0];
+ 239   2              skip_spaces();
+ 240   2      #if TRANSIT_UNMANAGED_SWUP
+                      if (cmd_cmp(cmd_ptr, "ERASE") == 0) {
+              #ifndef VTSS_COMMON_NDEBUG
+                          vtss_os_trace_level = 0;
+              #endif //VTSS_COMMON_NDEBUG
+              
+                          cmd_ptr += (sizeof("ERASE") - 1);
+                          if (retrieve_parms() != FORMAT_OK) {
+                              error_status = FORMAT_ERROR;
+                          } else {
+              #if FRONT_LED_PRESENT
+                              led_update_system(VTSS_LED_MODE_BLINK_GREEN);
+              #endif //FRONT_LED_PRESENT
+                              print_cr_lf();
+                              if (flash_erase_code((ulong) parms[0])) {
+                                  println_str("Fail");
+                              } else {
+                                  println_str("Done");
+                              }
+                              error_status = 0;
+              #if FRONT_LED_PRESENT
+                              led_update_system(VTSS_LED_MODE_ON_GREEN);
+              #endif //FRONT_LED_PRESENT
+                          }
+                      } else if (cmd_cmp(cmd_ptr, "PROGRAM") == 0) {
+              
+                          cmd_ptr += (sizeof("PROGRAM") - 1);
+                          if (retrieve_parms() != FORMAT_OK) {
+                              error_status = FORMAT_ERROR;
+                          }
+                          else if (parms_no != 3) {
+                              error_status = FORMAT_ERROR;
+                          } else {
+              #ifndef VTSS_COMMON_NDEBUG
+                              vtss_os_trace_level = 0;
+              #endif //VTSS_COMMON_NDEBUG
+              #if FRONT_LED_PRESENT
+                              led_update_system(VTSS_LED_MODE_BLINK_GREEN);
+              #endif //FRONT_LED_PRESENT
+                              print_cr_lf();
+                              if (flash_download_image((ulong) parms[0], (ulong) parms[1], (uchar) parms[2])) {
+                                  println_str("Fail");
+              #if FRONT_LED_PRESENT
+                                  led_update_system(VTSS_LED_MODE_ON_GREEN);
+              #endif //FRONT_LED_PRESENT
+                              } else {
+                                  println_str("Done");
+                                  h2_reset();
+                              }
+                          }
+                      } else
+              #endif //TRANSIT_UNMANAGED_SWUP
+ 292   2      
+ 293   2      #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+ 294   2                  /*
+ 295   2                      config mac
+ 296   2                      config mac xx-xx-xx-xx-xx-xx
+ 297   2                      config dlevel error, warning, debug, noise
+ 298   2                  */
+ 299   2                  if(cmp_cmd_txt(CMD_TXT_NO_CONFIG, cmd_ptr)) {
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 6   
+
+ 300   3                      cmd_ptr += cmd_txt_tab[CMD_TXT_NO_CONFIG].min_match;
+ 301   3                      error_status = handle_sys_config();
+ 302   3                  } else
+ 303   2      #endif
+ 304   2      
+ 305   2              if (cmd_buf[0] != CLI_CR && /* Null string */
+ 306   2                  (error_status = handle_command()) != NULL) {
+ 307   3                  /* empty queue */
+ 308   3                  while (uart_byte_ready()) {
+ 309   4                      (void) uart_get_byte();
+ 310   4                  }
+ 311   3                  /* Show error message */
+ 312   3                  println_str("%% Invalid command");
+ 313   3              }
+ 314   2      
+ 315   2              cmd_len = 0;
+ 316   2              CLI_PROMPT();
+ 317   2          }
+ 318   1      }
+ 319          
+ 320          static void cli_csi_prefix(uchar ctrl_key) small
+ 321          {
+ 322   1          uart_put_byte(CLI_CSI_1);
+ 323   1          uart_put_byte(CLI_CSI_2);
+ 324   1          uart_put_byte(ctrl_key);
+ 325   1      }
+ 326          
+ 327          static void cli_backspace(void) small
+ 328          {
+ 329   1          cli_csi_prefix(CLI_CUB);
+ 330   1          cli_csi_prefix(CLI_EL);
+ 331   1      }
+ 332          
+ 333          /* ************************************************************************ */
+ 334          bool cmd_ready (void)
+ 335          /* ------------------------------------------------------------------------ --
+ 336           * Purpose     : Collect bytes received by uart driver and check if a command
+ 337           *               is ready (i.e. <CR> received).
+ 338           * Remarks     : Returns TRUE, if command is ready, otherwise FALSE.
+ 339           * Restrictions:
+ 340           * See also    :
+ 341           * Example     :
+ 342           ****************************************************************************/
+ 343          {
+ 344   1          uchar ch;
+ 345   1      
+ 346   1          if (uart_byte_ready()) {
+ 347   2              ch = uart_get_byte();
+ 348   2      
+ 349   2              if (ch != CLI_LF) { /* discard LF chars */
+ 350   3                  if (ch == CLI_CTLH) { /* handle backspace char */
+ 351   4                      if (cmd_len > 0) {
+ 352   5                          cmd_len--;
+ 353   5                          cli_backspace();
+ 354   5                      }
+ 355   4                  } else {
+ 356   4                      if (ch == CLI_SEQUENCE_INDICATOR) {
+ 357   5                          delay_1(1); // Delay 1ms to check if cursor control character come along with the sequ
+             -ence indicator
+ 358   5                      }
+ 359   4                      if (ch == CLI_SEQUENCE_INDICATOR && uart_byte_ready()) {
+ 360   5                          ch = uart_get_byte();
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 7   
+
+ 361   5                          if (ch == CLI_CURSOR_UP && cmd_len == 0) { // Only support cursor up while first chara
+             -cter input.
+ 362   6                              for (cmd_len = 0; cmd_buf[cmd_len] > 31 && cmd_buf[cmd_len] < 128; cmd_len++) {
+ 363   7                                  uart_put_byte(cmd_buf[cmd_len]);
+ 364   7                              }
+ 365   6                          }
+ 366   5                      } else if (ch == CLI_CR) {
+ 367   5                          /* error handling: ensure that CR is present in buffer in case of buffer overflow */
+ 368   5                          if (cmd_len == CLI_MAX_CMD_LEN) {
+ 369   6                              cmd_buf[CLI_MAX_CMD_LEN - 1] = CLI_CR;
+ 370   6                          }
+ 371   5                          cmd_buf[cmd_len++] = ch;
+ 372   5                          uart_put_byte(ch); // Echo the input character
+ 373   5                          uart_put_byte(CLI_CR);
+ 374   5                          uart_put_byte(CLI_LF);
+ 375   5                          return TRUE;
+ 376   5                      } else if (cmd_len < CLI_MAX_CMD_LEN && (ch > 31 && ch < 128) /* printable characters(32-1
+             -27) */) {
+ 377   5                          cmd_buf[cmd_len++] = ch;
+ 378   5                          uart_put_byte(ch); // Echo the input character
+ 379   5                      }
+ 380   4                  }
+ 381   3              }
+ 382   2          }
+ 383   1      
+ 384   1          return FALSE;
+ 385   1      }
+ 386          
+ 387          #if 0 /* For debug only */
+              void list_mii_reg(uchar iport)
+              {
+                  uchar  cnt;
+              
+                  println_str("std");
+              
+                  for (cnt = 0; cnt <= 31; cnt++) {
+                      print_hex_w(cnt);
+                      print_str(": ");
+                      print_hex_w(phy_read(iport, cnt));
+                      print_cr_lf();
+                  }
+              
+                  println_str("ext1");
+              
+                  phy_page_ext(iport);
+                  for (cnt = 0x12; cnt <= 0x1e; cnt++) {
+                      print_hex_w(cnt);
+                      print_str(": ");
+                      print_hex_w(phy_read(iport, cnt));
+                      print_cr_lf();
+                  }
+              
+                  println_str("ext2");
+              
+                  phy_page_ext2(iport);
+                  for (cnt = 0x10; cnt <= 0x11; cnt++) {
+                      print_hex_w(cnt);
+                      print_str(": ");
+                      print_hex_w(phy_read(iport, cnt));
+                      print_cr_lf();
+                  }
+              
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 8   
+
+                  println_str("gp");
+              
+                  phy_page_gp(iport);
+                  for (cnt = 0x0e; cnt <= 0x1d; cnt++) {
+                      print_hex_w(cnt);
+                      print_str(": ");
+                      print_hex_w(phy_read(iport, cnt));
+                      print_cr_lf();
+                  }
+              
+                  phy_page_std(iport);
+              
+              }
+              #endif
+ 435          
+ 436          static void cli_show_help_msg(void)
+ 437          {
+ 438   1          println_str("V : Show version");
+ 439   1          println_str("R <target> <offset> <addr>: Read from chip register");
+ 440   1          println_str("  --> Example: Read Chip ID register DEVCPU_GCB:CHIP_REGS:CHIP_ID");
+ 441   1          println_str("  -->                                0x71070000       0x0     0x0");
+ 442   1          println_str("  --> Command: R 0x71070000 0x0 0x0");
+ 443   1      
+ 444   1      #if 0 //defined(VTSS_ARCH_OCELOT)
+                  println_str("  --> ANA       : 0x71880000      ES0       : 0x71040000");
+                  println_str("  --> DEVCPU_GCB: 0x71070000      DEVCPU_ORG: 0x71000000");
+                  println_str("  --> DEVCPU_PTP: 0x710E0000      DEVCPU_QS : 0x71080000");
+                  println_str("  --> DEV[ 0]   : 0x711E0000      DEV[ 1]   : 0x711F0000");
+                  println_str("  --> DEV[ 2]   : 0x71200000      DEV[ 3]   : 0x71210000");
+                  println_str("  --> DEV[ 4]   : 0x71220000      DEV[ 5]   : 0x71230000");
+                  println_str("  --> DEV[ 6]   : 0x71240000      DEV[ 7]   : 0x71250000");
+                  println_str("  --> DEV[ 8]   : 0x71260000      DEV[ 9]   : 0x71270000");
+                  println_str("  --> DEV[10]   : 0x71280000");
+              #endif
+ 455   1      
+ 456   1          println_str("W <target> <offset> <addr> <value>: Write switch register");
+ 457   1          println_str("I <uport> <addr> [<page>]: Read PHY register");
+ 458   1          println_str("  --> Example: Read user port 1 PHY ID from PHY register 2 page 0");
+ 459   1          println_str("  --> Command: I 1 0x2 0");
+ 460   1          println_str("O <uport> <addr> <value> [<page>]: Write PHY register");
+ 461   1          println_str("P : Show Port information");
+ 462   1          println_str("? : Show commands");
+ 463   1      
+ 464   1      #ifndef UNMANAGED_REDUCED_DEBUG_IF
+ 465   1      #if defined(VTSS_ARCH_OCELOT)
+ 466   1          println_str("T <uport>: Send test packet (uport=0xff for all ports)");
+ 467   1      #if TRANSIT_LAG
+                  println_str("E <0|1|2> <iport_mask>: Trunk configuration (0=Add, 1=Del, 2=Show)");
+              #endif //TRANSIT_LAG
+ 470   1      
+ 471   1      #if TRANSIT_LACP
+                  println_str("F <0|1|2> <uport> [<key>]: LACP configuration (0=Enable, 1=Disable, 2=Show)");
+              #endif //TRANSIT_LACP
+ 474   1      
+ 475   1      #if defined(UNMANAGED_FLOW_CTRL_IF)
+ 476   1          println_str("K <0|1> <uport>: Flow control mode (0=Enable, 1=Disable)");
+ 477   1      #endif //UNMANAGED_FLOW_CTRL_IF
+ 478   1      
+ 479   1      #if defined(BUFFER_RESOURCE_DEBUG_ENABLE)
+                  println_str("B <0|1>: Dump buffer resource configuration or status (0=Config, 1=Status)");
+              #endif // BUFFER_RESOURCE_DEBUG_ENABLE
+ 482   1      
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 9   
+
+ 483   1      #if TRANSIT_UNMANAGED_MAC_OPER_GET
+ 484   1          println_str("M [<uport> [c]: Show/Clear MAC address entries (uport=0 for CPU port)");
+ 485   1      #endif // TRANSIT_UNMANAGED_MAC_OPER_GET
+ 486   1      
+ 487   1      #elif defined(VTSS_ARCH_LUTON26)
+              #if LOOPBACK_TEST
+                  println_str("T : Loopback test");
+              #endif //LOOPBACK_TEST
+              #endif // FERRET
+ 492   1      
+ 493   1      
+ 494   1      #if TRANSIT_LLDP
+              #if TRANSIT_EEE_LLDP
+                  println_str("G [0|1|2|3]: LLDP configuration (0=Disable, 1=Enable, 2=Remove EEE TLV, 3=Add EEE TLV)");
+              #else
+                  println_str("G [0|1]: LLDP mode (0=Disable, 1=Enable)");
+              #endif // TRANSIT_EEE_LLDP
+              #endif // TRANSIT_LLDP
+ 501   1      
+ 502   1          println_str("X : Reboot device");
+ 503   1          println_str("Z <0|1>: E-Col-Drop mode, linkup ports only (0=Disable, 1=Enable)");
+ 504   1      
+ 505   1      #if UNMANAGED_FAN_DEBUG_IF
+                  println_str("F temp_max temp_on: Update temp. max and on");
+              #endif // UNMANAGED_FAN_DEBUG_IF
+ 508   1      
+ 509   1      #ifndef VTSS_COMMON_NDEBUG
+                  println_str("B level: Set debug level 1 to 4");
+              #endif
+ 512   1      #if UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF
+                  println_str("C [<uport>]: Run veriphy");
+              #endif
+ 515   1      
+ 516   1      #if TRANSIT_EEE
+                  print_str("A [0|1|2]: 1=EEE Enalbed, 0=EEE Disabled");
+              #if TRANSIT_EEE_LLDP
+                  println_str("    LLDP with EEE tlv enabled/disabled automatically ");
+              #endif // TRANSIT_EEE_LLDP
+              #endif // TRANSIT_EEE
+ 522   1      
+ 523   1      #if UNMANAGED_PORT_STATISTICS_IF
+ 524   1          println_str("H <uport> [c]: Show/Clear port statistics (uport=0 for CPU port)");
+ 525   1      #endif // UNMANAGED_PORT_STATISTICS_IF
+ 526   1      
+ 527   1      #if defined(VTSS_ARCH_LUTON26)
+              #if USE_HW_TWI
+                  println_str("C : read I2C data <I2C_addr> <starting addr> <count>");
+              #endif // USE_HW_TWI
+              #endif // VTSS_ARCH_LUTON26
+ 532   1      
+ 533   1          println_str("S <0|1>: Suspend/Resume applications (0=Resume, 1=Suspend)");
+ 534   1      
+ 535   1      #if TRANSIT_UNMANAGED_SWUP
+                  println_str("D : Dump bytes from SPI flash");
+              #endif // TRANSIT_UNMANAGED_SWUP
+ 538   1      
+ 539   1      #endif /* UNMANAGED_REDUCED_DEBUG_IF */
+ 540   1      
+ 541   1      #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+ 542   1          println_str("CONFIG                       : Show all configurations");
+ 543   1          println_str("CONFIG MAC xx:xx:xx:xx:xx:xx : Update MAC addresses in RAM");
+ 544   1      #if TRANSIT_SPI_FLASH
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 10  
+
+                  println_str("CONFIG SAVE                  : Program configurations at RAM to flash");
+              #endif // TRANSIT_SPI_FLASH
+ 547   1      #endif // TRANSIT_UNMANAGED_SYS_MAC_CONF
+ 548   1      }
+ 549          
+ 550          /* ************************************************************************ */
+ 551          static uchar handle_command (void)
+ 552          /* ------------------------------------------------------------------------ --
+ 553           * Purpose     : Interpret and handle command (apart from config commands).
+ 554           * Remarks     : Module variable cmd_ptr must have been set to point to first
+ 555           *               non-space char in command string, when this function is called.
+ 556           *               Returns 0, if successful, otherwise <> 0.
+ 557           * Restrictions:
+ 558           * See also    :
+ 559           * Example     :
+ 560           ****************************************************************************/
+ 561          {
+ 562   1          uchar cmd;
+ 563   1      #ifndef UNMANAGED_REDUCED_DEBUG_IF
+ 564   1      #if TRANSIT_EEE
+                  ulong dat;
+              #endif    
+ 567   1      #if defined(VTSS_ARCH_LUTON26)
+              #if USE_HW_TWI
+                  ulong count;
+                  uchar i2c_addr,i2c_data;
+                  ulong curr_addr_l;
+                  uchar curr_addr;
+              #endif //USE_HW_TWI
+              #endif //defined(VTSS_ARCH_LUTON26)
+ 575   1      #if TRANSIT_LAG
+                  uchar rc;
+              #endif //TRANSIT_LAG
+ 578   1      #if TRANSIT_LACP
+                  vtss_lacp_port_config_t cfg;
+                  vtss_common_port_t portno;
+                  vtss_lacp_portstatus_t pst;
+                  vtss_lacp_aggregatorstatus_t ast;
+                  vtss_lacp_agid_t aggrid;
+              #endif //TRANSIT_LACP
+ 585   1      
+ 586   1      #if UNMANAGED_TCAM_DEBUG_IF
+                  uchar cntr;
+                  tcam_data_conf_t conf_r;
+              #endif
+ 590   1      #endif //UNMANAGED_REDUCED_DEBUG_IF
+ 591   1      
+ 592   1          cmd = *cmd_ptr;
+ 593   1          cmd_ptr++;
+ 594   1      
+ 595   1          if (retrieve_parms() != FORMAT_OK) {
+ 596   2              return FORMAT_ERROR;
+ 597   2          }
+ 598   1      
+ 599   1          switch (conv_to_upper_case(cmd)) {
+ 600   2          case 'V': /* Get version info */
+ 601   2              cli_show_sw_ver();
+ 602   2              break;
+ 603   2      
+ 604   2      #if !defined(BRINGUP)
+ 605   2          case 'P': /* Show port information */
+ 606   2              cli_show_port_info();
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 11  
+
+ 607   2              break;
+ 608   2      #endif // !BRINGUP
+ 609   2      
+ 610   2          case 'W': /* Write switch register */
+ 611   2              if (parms_no >= 4) {
+ 612   3                  H2_WRITE((parms[0] + parms[1] + parms[2]), parms[3]);
+ 613   3              }
+ 614   2              // No need break state for this case (write operation).
+ 615   2              // Read the register value after that.
+ 616   2      
+ 617   2          case 'R': /* Read switch register */
+ 618   2              /* Target and offset as parameter */
+ 619   2              if (parms_no >= 3) {
+ 620   3                  H2_READ((parms[0] + parms[1] + parms[2]), parms[3] /*dat*/);
+ 621   3                  print_parse_info_32(parms[3]);
+ 622   3              }
+ 623   2              break;
+ 624   2      
+ 625   2      #if !defined(BRINGUP)
+ 626   2          case 'O': /* Write PHY register */
+ 627   2              /* Front port number and PHY address */
+ 628   2              if (parms_no >= 4) {
+ 629   3                  /* Change page */
+ 630   3                  phy_write(uport2cport((uchar) parms[0]), 31, parms[3]);
+ 631   3                  phy_write(uport2cport((uchar) parms[0]), parms[1], parms[2]);
+ 632   3                  phy_write(uport2cport((uchar) parms[0]), 31, 0);
+ 633   3              } else if (parms_no == 3) {
+ 634   3                  phy_write(uport2cport((uchar) parms[0]), parms[1], parms[2]); // direct write
+ 635   3              }
+ 636   2              // No need break state for this case (write operation).
+ 637   2              // Read the register value after that.
+ 638   2      
+ 639   2          case 'I': /* Read PHY register */
+ 640   2              /* Front port number and PHY address */
+ 641   2              print_hex_prefix();
+ 642   2              if (parms_no > 2) {
+ 643   3                  // Change page
+ 644   3                  phy_write(uport2cport((uchar) parms[0]), 31, parms[2]);
+ 645   3                  print_hex_w(phy_read(uport2cport((uchar) parms[0]), parms[1]));
+ 646   3                  phy_write(uport2cport((uchar) parms[0]), 31, 0); // Back to std page
+ 647   3      #if 0
+                      } else if (parms_no == 1) {
+                          /* list all mii register */
+                          list_mii_reg(uport2cport((uchar) parms[0]));
+              #endif
+ 652   3              } else if (parms_no == 2) {
+ 653   3                  print_hex_w(phy_read(uport2cport((uchar) parms[0]), parms[1]));
+ 654   3              }
+ 655   2      
+ 656   2              print_cr_lf();
+ 657   2              break;
+ 658   2      #endif /* BRINGUP */
+ 659   2      
+ 660   2      #ifndef VTSS_COMMON_NDEBUG
+                  case 'L': /* test LED */
+                      led_state(parms[0], parms[1], parms[2]);
+                      break;
+              #endif
+ 665   2      
+ 666   2      #if TRANSIT_UNMANAGED_MAC_OPER_GET
+ 667   2          case 'M': /* Show/Clear MAC address entries */
+ 668   2              if (parms_no <= 1) {
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 12  
+
+ 669   3                  cli_show_mac_addr(parms_no ? (parms[0] == 0 ? CPU_CHIP_PORT : uport2cport(parms[0])) : 0xFF);
+ 670   3              } else {
+ 671   3                  h2_mactab_flush_port(uport2cport(parms[0]));
+ 672   3              }
+ 673   2              break;
+ 674   2      #endif // TRANSIT_UNMANAGED_MAC_OPER_GET
+ 675   2      
+ 676   2          case '?': /* Show CLI command help message */
+ 677   2              cli_show_help_msg();
+ 678   2              break;
+ 679   2      
+ 680   2      #ifndef UNMANAGED_REDUCED_DEBUG_IF
+ 681   2      #if defined(VTSS_ARCH_OCELOT)
+ 682   2      #if TRANSIT_LLDP || TRANSIT_LACP
+                  case 'T': /* Test packet sending */
+                      perform_tx_rx_test(parms[0] == 0xFF ? 0xFF : uport2iport(parms[0]), 2, 0);
+                  break;
+              #endif // TRANSIT_LLDP || TRANSIT_LACP    
+ 687   2      #if TRANSIT_LAG
+                  case 'E': /* Tests */
+                     switch ((uchar) parms[0]) {
+                     case 0:
+                          rc = h2_aggr_add(parms[1]);
+                          break;
+                     case 1:
+                          rc = h2_aggr_delete(parms[1]);
+                          break;
+                     default:
+                          vtss_show_masks();
+                          rc = 0;
+                          break;
+                      }
+                      if (rc != 0 ) {
+                          print_str("Error code: "); print_dec(rc); print_cr_lf();
+                      }
+                      break;
+              #endif //TRANSIT_LAG
+ 706   2      #if TRANSIT_LACP
+                  case 'F':   /* LACP configuration */
+                      //print_dec(parms[2]);
+                      portno = OSEXT2LACP(parms[1]);
+              
+              
+                      vtss_lacp_get_portconfig(portno, &cfg);
+                      if (parms[2] >= 0 &&  parms[2] <= 65535) {  /* Ignore it if users don't enter this parameter */
+                        cfg.port_key = parms[2];
+                      }
+                      //print_str("cfg.port_key:  ");  print_dec(cfg.port_key); print_cr_lf();
+              
+                      switch ((uchar) parms[0]) {
+                      case 0:
+                          cfg.enable_lacp = TRUE;
+                          vtss_lacp_set_portconfig(portno, &cfg);
+                          phy_state_to_setup(uport2cport(parms[1]));
+                          break;
+                      case 1:
+                          cfg.enable_lacp = FALSE;
+                          vtss_lacp_set_portconfig(portno, &cfg);
+                          phy_state_to_setup(uport2cport(parms[1]));
+                          break;
+                     default:
+                          println_str("Group-Id | Partner-Id/Priority/key      | Ports");
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 13  
+
+                          print_line(66);
+                          print_cr_lf();
+                          //println_str("=================================================================");
+                          for (aggrid = 1; aggrid <= VTSS_LACP_MAX_AGGR; aggrid++) {
+                              if (vtss_lacp_get_aggr_status(aggrid, &ast)) {
+                                  print_dec(aggrid);
+                                  print_spaces(10);
+                                  print_mac_addr(ast.partner_oper_system.macaddr);
+                                  print_ch('/');
+                                  print_dec(ast.partner_oper_system_priority);
+                                  print_ch('/');
+                                  print_dec(ast.partner_oper_key);
+                                  print_spaces(8);
+                                  //member_mask = 0;
+                                  //for (portno = 0; portno < VTSS_LACP_MAX_PORTS; portno++)
+                                  //    WRITE_PORT_BIT_MASK(LACP2OSINT(portno + 1), ast.port_list[portno], &member_mask)
+             -;
+                                  //print_port_list(member_mask);
+                                  for (portno = 0; portno < VTSS_LACP_MAX_PORTS; portno++) {
+                                      if (ast.port_list[portno]) {
+                                          print_dec(iport2uport(portno)); print_spaces(1);
+                                      }
+                                  }
+                                  print_spaces(8);
+                                  print_dec(ast.secs_since_last_change);
+                                  print_cr_lf();
+                              }
+                          }
+              
+                          print_cr_lf();
+                          print_cr_lf();
+                          println_str("Port  Enabled       Key     Group   Partner-Port/Priority");
+                          print_line(66);
+                          print_cr_lf();
+                          for (portno = 1; portno <= VTSS_LACP_MAX_PORTS; portno++) {
+                              vtss_lacp_get_port_status(portno, &pst);
+                              print_dec(portno);
+                              //print_spaces(6);
+                              print_dec_right(pst.port_enabled); //state
+                              print_dec_right(pst.actor_oper_port_key); //key
+                              print_dec_right(pst.actor_port_aggregator_identifier); //aggid
+                              //print_spaces(9);
+                              print_dec_right(pst.partner_oper_port_number); //partner_port
+                              print_ch('/');
+                              print_dec(pst.partner_oper_port_priority); // partner_pri
+                              print_cr_lf();
+                          }
+                          break;
+                      }
+                      break;
+              #endif //TRANSIT_LACP
+ 781   2      
+ 782   2      #if defined(UNMANAGED_FLOW_CTRL_IF)
+ 783   2          case 'K':   /* Flow control mode */
+ 784   2             phy_flowcontrol_set(uport2cport(parms[1]), !parms[0]);
+ 785   2             phy_state_to_setup(uport2cport(parms[1]));
+ 786   2           break;           
+ 787   2      #endif //UNMANAGED_FLOW_CTRL_IF
+ 788   2      
+ 789   2      #if defined(BUFFER_RESOURCE_DEBUG_ENABLE) || defined(SERDES_DEBUG_ENABLE)
+                  case 'B':   /* Dump buffer resource configuration or status */
+                      switch ((uchar) parms[0]) {
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 14  
+
+              #if defined(BUFFER_RESOURCE_DEBUG_ENABLE)
+                      case 0:    // Dump RES_CFG 
+                      case 1: {  // Dump RES_STAT
+                          BOOL dump_status = parms[0] ? TRUE : FALSE;
+                          ulong i, j, reg_val, wm_value, wm_unit, inuse, maxuse, res_idx;
+              
+                          if (dump_status) {
+                              println_str("RES_STAT: Dump when maxuse != 0 and maxuse >= wm");
+                          } else {
+                              println_str("RES_CFG: Dump when wm != 0");
+                          }
+              
+                          for (i = 0; i < 1024; i++) {
+                              // Read RES_CFG
+                              H2_READ(VTSS_QSYS_RES_CTRL_RES_CFG(i), reg_val);
+                              wm_unit = VTSS_X_QSYS_RES_CTRL_RES_CFG_WM_MULTIPLIER_UNIT(reg_val);
+                              wm_value = VTSS_X_QSYS_RES_CTRL_RES_CFG_WM_VALE(reg_val) * (wm_unit ? 16 : 1);
+              
+                              // Read RES_STAT
+                              if (dump_status) {
+                                  H2_READ(VTSS_QSYS_RES_CTRL_RES_STAT(i), reg_val);
+                                  inuse = VTSS_X_QSYS_RES_CTRL_RES_STAT_INUSE(reg_val);
+                                  maxuse = VTSS_X_QSYS_RES_CTRL_RES_STAT_MAXUSE(reg_val);
+                              }
+              
+                              if ((!dump_status && wm_value) || // Only dump when wm_value != 0
+                                  (dump_status && maxuse && maxuse >= wm_value)     // Only dump when maxuse != 0 and ma
+             -xuse >= wm_value
+                                 ) {
+                                  res_idx = i / 256;
+                                  print_str("Res[");
+                                  if (res_idx == 0) {
+                                      print_str("SrcMem");
+                                  } else if (res_idx == 1) {
+                                      print_str("SrcRef");
+                                  } else if (res_idx == 2) {
+                                      print_str("DstMem");
+                                  } else { // res_idx = 3
+                                      print_str("DstRef");
+                                  }
+                                  print_str("] - ");
+              
+                                  j = i % 256;
+                                  if (j < 96) {
+                                      print_str("Port and QoS class : Port");
+                                      print_dec(j / 8);
+                                      print_str(", Class");
+                                      print_dec(j % 8);
+                                  } else if (j < 216) {
+                                      //print_str("Unused:");
+                                      //print_dec(j);
+                                  } else if (j < 224) {
+                                      print_str("QoS class sharing  : Class");
+                                      print_dec(j - 216);
+                                  } else if (j < 236) {
+                                      print_str("Port reservation   : Port");
+                                      print_dec(j - 224);
+                                  } else if (j == 254) {
+                                      print_str("Color sharing      : DP=1(Yellow)");
+                                  } else if (j == 255) {
+                                      print_str("Color sharing      : DP=0(Green)");
+                                  } else {
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 15  
+
+                                      //print_str("Unused:");
+                                      //print_dec(j);
+                                  }
+              
+                                  print_str(". WM=");
+                                  print_dec(wm_value);
+              
+                                  if (dump_status) {
+                                      print_str(", Inuse=");
+                                      print_dec(inuse);
+                                      print_str(", Maxuse=");
+                                      print_dec(maxuse);
+                                  }
+                                  print_cr_lf();
+                              }
+                          }
+                      }
+                      break;
+              #endif // BUFFER_RESOURCE_DEBUG_ENABLE
+              
+              #if defined(SERDES_DEBUG_ENABLE)
+                      case 2: {
+                          ulong idx, i, sd6g_addr, reg_val, dump_reg_cnt = 31;
+                          ulong reg_addr[31] = {
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_DIG_CFG            ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_DFT_CFG0           ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_DFT_CFG1           ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_DFT_CFG2           ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_TP_CFG0            ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_TP_CFG1            ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_RC_PLL_BIST_CFG    ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_MISC_CFG           ,
+                              VTSS_HSIO_SERDES6G_DIG_CFG_SERDES6G_OB_ANEG_CFG        ,
+                              VTSS_HSIO_SERDES6G_DIG_STATUS_SERDES6G_DFT_STATUS      ,
+                              VTSS_HSIO_SERDES6G_DIG_STATUS_SERDES6G_ERR_CNT         ,
+                              VTSS_HSIO_SERDES6G_DIG_STATUS_SERDES6G_MISC_STATUS     ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_DES_CFG            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_IB_CFG             ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_IB_CFG1            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_IB_CFG2            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_IB_CFG3            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_IB_CFG4            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_IB_CFG5            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_OB_CFG             ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_OB_CFG1            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_SER_CFG            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_COMMON_CFG         ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_PLL_CFG            ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_ACJTAG_CFG         ,
+                              VTSS_HSIO_SERDES6G_ANA_CFG_SERDES6G_GP_CFG             ,
+                              VTSS_HSIO_SERDES6G_ANA_STATUS_SERDES6G_IB_STATUS0      ,
+                              VTSS_HSIO_SERDES6G_ANA_STATUS_SERDES6G_IB_STATUS1      ,
+                              VTSS_HSIO_SERDES6G_ANA_STATUS_SERDES6G_ACJTAG_STATUS   ,
+                              VTSS_HSIO_SERDES6G_ANA_STATUS_SERDES6G_PLL_STATUS      ,
+                              VTSS_HSIO_SERDES6G_ANA_STATUS_SERDES6G_REVID
+                          };        
+                          char *reg_name[31] = {
+                              "SERDES6G_DIG_CFG_SERDES6G_DIG_CFG",
+                              "SERDES6G_DIG_CFG_SERDES6G_DFT_CFG0",
+                              "SERDES6G_DIG_CFG_SERDES6G_DFT_CFG1",
+                              "SERDES6G_DIG_CFG_SERDES6G_DFT_CFG2",
+                              "SERDES6G_DIG_CFG_SERDES6G_TP_CFG0 ",
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 16  
+
+                              "SERDES6G_DIG_CFG_SERDES6G_TP_CFG1",
+                              "SERDES6G_DIG_CFG_SERDES6G_RC_PLL_BIST_CFG",
+                              "SERDES6G_DIG_CFG_SERDES6G_MISC_CFG",
+                              "SERDES6G_DIG_CFG_SERDES6G_OB_ANEG_CFG",
+                              "SERDES6G_DIG_STATUS_SERDES6G_DFT_STATUS",
+                              "SERDES6G_DIG_STATUS_SERDES6G_ERR_CNT",
+                              "SERDES6G_DIG_STATUS_SERDES6G_MISC_STATUS",
+                              "SERDES6G_ANA_CFG_SERDES6G_DES_CFG",
+                              "SERDES6G_ANA_CFG_SERDES6G_IB_CFG",
+                              "SERDES6G_ANA_CFG_SERDES6G_IB_CFG1",
+                              "SERDES6G_ANA_CFG_SERDES6G_IB_CFG2",
+                              "SERDES6G_ANA_CFG_SERDES6G_IB_CFG3",
+                              "SERDES6G_ANA_CFG_SERDES6G_IB_CFG4",
+                              "SERDES6G_ANA_CFG_SERDES6G_IB_CFG5",
+                              "SERDES6G_ANA_CFG_SERDES6G_OB_CFG",
+                              "SERDES6G_ANA_CFG_SERDES6G_OB_CFG1",
+                              "SERDES6G_ANA_CFG_SERDES6G_SER_CFG",
+                              "SERDES6G_ANA_CFG_SERDES6G_COMMON_CFG",
+                              "SERDES6G_ANA_CFG_SERDES6G_PLL_CFG",
+                              "SERDES6G_ANA_CFG_SERDES6G_ACJTAG_CFG",
+                              "SERDES6G_ANA_CFG_SERDES6G_GP_CFG ",
+                              "SERDES6G_ANA_STATUS_SERDES6G_IB_STATUS0",
+                              "SERDES6G_ANA_STATUS_SERDES6G_IB_STATUS1",
+                              "SERDES6G_ANA_STATUS_SERDES6G_ACJTAG_STATUS",
+                              "SERDES6G_ANA_STATUS_SERDES6G_PLL_STATUS",
+                              "SERDES6G_ANA_STATUS_SERDES6G_REVID"
+                          };
+              
+                          for (idx = 0; idx < 2; idx++) {
+                              if (idx == 0) {
+                                  println_str("Dump SerDes6G_1");
+                                  sd6g_addr = 1 << 1; // SerDes6G_1
+                              } else {
+                                  println_str("Dump SerDes6G_2");
+                                  sd6g_addr = 1 << 2; // SerDes6G_2
+                              }
+              
+                              for (i = 0; i < dump_reg_cnt; i++) {
+                                  h2_sd6g_read(sd6g_addr);
+                                  H2_READ(reg_addr[i], reg_val);
+                                  println_str(reg_name[i]);
+                                  print_parse_info_32(reg_val);
+                                  print_cr_lf();  
+                              }
+                          }
+                          break;
+                      }
+                      case 3: {
+                          ulong idx, i, sd1g_addr, reg_val, dump_reg_cnt = 15;
+                          ulong reg_addr[15] = {
+                              VTSS_HSIO_SERDES1G_ANA_CFG_SERDES1G_DES_CFG        ,
+                              VTSS_HSIO_SERDES1G_ANA_CFG_SERDES1G_IB_CFG         ,
+                              VTSS_HSIO_SERDES1G_ANA_CFG_SERDES1G_OB_CFG         ,
+                              VTSS_HSIO_SERDES1G_ANA_CFG_SERDES1G_SER_CFG        ,
+                              VTSS_HSIO_SERDES1G_ANA_CFG_SERDES1G_COMMON_CFG     ,
+                              VTSS_HSIO_SERDES1G_ANA_CFG_SERDES1G_PLL_CFG        ,
+                              VTSS_HSIO_SERDES1G_ANA_STATUS_SERDES1G_PLL_STATUS  ,
+                              VTSS_HSIO_SERDES1G_DIG_CFG_SERDES1G_DFT_CFG0       ,
+                              VTSS_HSIO_SERDES1G_DIG_CFG_SERDES1G_DFT_CFG1       ,
+                              VTSS_HSIO_SERDES1G_DIG_CFG_SERDES1G_DFT_CFG2       ,
+                              VTSS_HSIO_SERDES1G_DIG_CFG_SERDES1G_TP_CFG         ,
+                              VTSS_HSIO_SERDES1G_DIG_CFG_SERDES1G_RC_PLL_BIST_CFG,
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 17  
+
+                              VTSS_HSIO_SERDES1G_DIG_CFG_SERDES1G_MISC_CFG       ,
+                              VTSS_HSIO_SERDES1G_DIG_STATUS_SERDES1G_DFT_STATUS  ,
+                              VTSS_HSIO_SERDES1G_DIG_STATUS_SERDES1G_MISC_STATUS
+                          };        
+                          char *reg_name[15] = {
+                              "SERDES1G_ANA_CFG_SERDES1G_DES_CFG",
+                              "SERDES1G_ANA_CFG_SERDES1G_IB_CFG",
+                              "SERDES1G_ANA_CFG_SERDES1G_OB_CFG",
+                              "SERDES1G_ANA_CFG_SERDES1G_SER_CFG",
+                              "SERDES1G_ANA_CFG_SERDES1G_COMMON_CFG",
+                              "SERDES1G_ANA_CFG_SERDES1G_PLL_CFG",
+                              "SERDES1G_ANA_STATUS_SERDES1G_PLL_STATUS",
+                              "SERDES1G_DIG_CFG_SERDES1G_DFT_CFG0",
+                              "SERDES1G_DIG_CFG_SERDES1G_DFT_CFG1",
+                              "SERDES1G_DIG_CFG_SERDES1G_DFT_CFG2",
+                              "SERDES1G_DIG_CFG_SERDES1G_TP_CFG",
+                              "SERDES1G_DIG_CFG_SERDES1G_RC_PLL_BIST_CFG",
+                              "SERDES1G_DIG_CFG_SERDES1G_MISC_CFG",
+                              "SERDES1G_DIG_STATUS_SERDES1G_DFT_STATUS",
+                              "SERDES1G_DIG_STATUS_SERDES1G_MISC_STATUS "
+                          };
+              
+                          for (idx = 0; idx < 2; idx++) {
+                              if (idx == 0) {
+                                  println_str("Dump SerDes1G_4");
+                                  sd1g_addr = 1 << 4; // SerDes1G_4
+                              } else {
+                                  println_str("Dump SerDes1G_5");
+                                  sd1g_addr = 1 << 5; // SerDes1G_5
+                              }
+                              for (i = 0; i < dump_reg_cnt; i++) {
+                                  h2_sd1g_read(sd1g_addr);
+                                  H2_READ(reg_addr[i], reg_val);
+                                  println_str(reg_name[i]);
+                                  print_parse_info_32(reg_val);
+                                  print_cr_lf();  
+                              }
+                          }
+                          break;
+                      }
+              #endif // SERDES_DEBUG_ENABLE
+                  }
+              break;
+              #endif // BUFFER_RESOURCE_DEBUG_ENABLE || SERDES_DEBUG_ENABLE
+1021   2      
+1022   2      #if UNMANAGED_TCAM_DEBUG_IF
+                  case 'Y': /* TCAM configuration get */
+                      memset(&conf_r,0,sizeof(tcam_data_conf_t));
+                      cntr = h2_tcam_count_get(TCAM_TARGET_IS2);
+                      print_dec(cntr);
+                      println_str(" is ACL count ");
+                      if ((uchar)parms[0] < cntr) {
+                          h2_tcam_e2e_tc_get((uchar)parms[0],&conf_r);
+                          print_str("TCAM information of entry id ");
+                          print_dec(parms[0]);
+                          print_cr_lf();
+                          print_line(66);
+                          print_cr_lf();
+                          for (cntr=0;cntr<TCAM_ENTRY_WIDTH;cntr++) {
+                              print_cr_lf();
+                              print_hex_dw(conf_r.tcam_entry[cntr]);
+                              println_str("<tcam entry");
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 18  
+
+                              print_hex_dw(conf_r.tcam_mask[cntr]);
+                              println_str("<tcam mask");
+                          }
+                          print_hex_dw(conf_r.tcam_action[0]);
+                          println_str("<action 0");
+                          print_hex_dw(conf_r.tcam_action[1]);
+                          println_str("<action 1");
+                          print_hex_dw(conf_r.tg);
+                          println_str("<tg");
+                          print_hex_dw(conf_r.tcam_count);
+                          println_str("<count");
+                      } else {
+                          print_dec((uchar)parms[0]);
+                          println_str(" is not valid ACL id");
+                      }
+                      break;
+              #endif
+1056   2      
+1057   2      
+1058   2      #elif defined(VTSS_ARCH_LUTON26)
+                  case 'T': /* Tests */
+                      switch ((uchar) parms[0]) {
+              #if LOOPBACK_TEST
+                      case 1:
+                          perform_tx_rx_test(parms[1], parms[2], 0);
+                          break;
+                      case 2:
+                          perform_tx_rx_test(parms[1], parms[2], 1);
+                          break;
+              #endif /* LOOPBACK_TEST */
+              
+                      default:
+                          return FORMAT_ERROR;
+                      }
+                      break;
+              #endif //#elif defined(VTSS_ARCH_LUTON26)
+1075   2      
+1076   2          case 'Z': { /* Enable/Disalbe Excessive Col drop */
+1077   3              vtss_iport_no_t iport_idx;
+1078   3              vtss_cport_no_t chip_port;
+1079   3              uchar drop_enable = (parms_no == 1 && parms[0] == 1) ? 0 : 1;
+1080   3      
+1081   3              for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+1082   4                  chip_port = iport2cport(iport_idx);
+1083   4                  if (is_port_link(chip_port)) { // Link up
+1084   5                      // Set E-Col-Drop on link-up ports only
+1085   5                      h2_enable_exc_col_drop(iport2cport(iport_idx), drop_enable);
+1086   5                  }
+1087   4              }
+1088   3              break;
+1089   3          } // case 'Z'
+1090   2      
+1091   2      #if USE_HW_TWI
+1092   2      #if defined(VTSS_ARCH_LUTON26)
+                  case 'C': /* Read switch register */
+                      print_cr_lf();
+                      i2c_addr = parms[0];
+                      if (parms[2] == 0) { /* test i2c_eeprom_read */
+                          curr_addr_l = parms[1];
+                          if (i2c_eeprom_read(i2c_addr, &curr_addr_l, &i2c_data) == TRUE) {
+                              print_hex_b(i2c_data);
+                              print_spaces(2);
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 19  
+
+                              if (i2c_data > 32 && i2c_data< 127)
+                                  print_ch(i2c_data);
+                              print_cr_lf();
+                          } else {
+                              println_str("access fail");
+                          }
+              
+                      } else { /* sample code of i2c_tx and i2c_rx*/
+                          curr_addr = parms[1];
+                          for (count = 0; count < parms[2]; count++) {
+              #if 0 // Ferret, TODO. Missing first parameter
+                              i2c_tx(i2c_addr, &curr_addr, 1);
+                              dat = i2c_rx(i2c_addr, &i2c_data, 1);
+              #endif // Ferret. TODO.
+                              if (dat != 0 ) {
+                                  print_dec(count);
+                                  print_str(": ");
+                                  print_hex_b(i2c_data);
+                                  print_spaces(2);
+                                  if (i2c_data > 32 && i2c_data< 127)
+                                      print_ch(i2c_data);
+                                  print_cr_lf();
+                              } else
+                                  break;
+                              curr_addr++;
+                          }
+                      }
+              
+                      break;
+              #endif //#if defined(VTSS_ARCH_LUTON26)
+1131   2      #endif //USE_HW_TWI
+1132   2      
+1133   2      #if UNMANAGED_PORT_STATISTICS_IF
+1134   2          case 'H': /* Show/Clear port statistics */
+1135   2              if (parms_no == 1) {
+1136   3                  print_port_statistics(parms[0] == 0 ? CPU_CHIP_PORT : uport2cport(parms[0]));
+1137   3              } else if (parms_no == 2 && parms[0] < NO_OF_BOARD_PORTS) {
+1138   3                  h2_stats_counter_clear(parms[0] == 0 ? CPU_CHIP_PORT : uport2cport(parms[0]));
+1139   3              } else {
+1140   3                  return FORMAT_ERROR;
+1141   3              }
+1142   2              break;
+1143   2          case 0x18: /* 0x18: Contrl Character ^R, it is used to break the CLI display process */
+1144   2              GPARM_break_show_statistic_flag = 1;
+1145   2              break;
+1146   2      #endif
+1147   2      
+1148   2      #if TRANSIT_FAN_CONTROL
+              #if UNMANAGED_FAN_DEBUG_IF
+                  case 'F': /* Fan control */
+                      /*
+                      ** F t_max t_on
+                      ** F
+                      */
+                      if (parms_no >= 1) {
+                          write_fan_conf_t_max((uchar) parms[0]);
+                          write_fan_conf_t_on((uchar) parms[1]);
+                      } else {
+                          handle_fan_control();
+                      }
+                      break;
+              #endif
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 20  
+
+              #endif
+1164   2      
+1165   2      #if TRANSIT_EEE
+                      //
+                      // Enable / disable EEE for all ports.
+                      // cmd:"A 0"  = EEE Disable, disable LLDP
+                      // cmd:"A 1"  = EEE Enable VGA down, enable LLDP
+                      // cmd:"A 2"  = EEE Enable VGA up, enable LLDP
+              
+                  case 'A': /* Enable/Disable EEE */
+                      // We set all ports to the same.
+                      for (parms[1] = 0; parms[1] < NO_OF_BOARD_PORTS; parms[1]++)
+                      {
+                          vtss_port_no_t  iport = parms[1];
+                          vtss_port_no_t  fport = iport + 1;
+                          vtss_port_no_t  sport = uport2cport(fport);
+              
+                          switch ((uchar) parms[0]) {
+                          case 0:
+                              /* Disable EEE */
+                              write_eee_conf_mode(iport, FALSE);
+                              eee_port_mode_setup(sport);
+              #if TRANSIT_EEE_LLDP
+                              lldp_os_set_admin_status(fport, LLDP_DISABLED);
+              #endif
+                              break;
+                          case 1:
+                              /* Enable EEE*/
+                              write_eee_conf_mode(iport, TRUE);
+                              eee_port_mode_setup(sport);
+                              /* Enable VGA Down*/
+              #if VTSS_ATOM12_A
+                              vga_adc_debug (sport, ATOM12_EN_NONE);
+              #endif
+              #if TRANSIT_EEE_LLDP
+                              lldp_os_set_admin_status(fport, LLDP_ENABLED_RX_TX);
+              #endif
+                              break;
+                          case 2:
+                              /* Enable EEE*/
+                              write_eee_conf_mode(iport, TRUE);
+                              eee_port_mode_setup(sport);
+              #if VTSS_ATOM12_A
+                              /* Enable VGA Up*/
+                              vga_adc_debug (sport, ATOM12_EN_BOTH);
+              #endif
+              #if TRANSIT_EEE_LLDP
+                              lldp_os_set_admin_status(fport, LLDP_ENABLED_RX_TX);
+              #endif
+                              break;
+              
+                          case 3:
+                              dat = phy_mmd_rd(sport, 7, 61);
+                              print_str ("7.61 =0x");
+                              print_hex_w(dat);
+              
+                              dat = phy_mmd_rd(sport, 7, 60);
+                              print_str (" 7.60 =0x");
+                              print_hex_w(dat);
+              
+                              dat = phy_mmd_rd(sport, 3, 1);
+                              print_str (" 3.1 =0x");
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 21  
+
+                              print_hex_w(dat);
+              
+                              print_str (" \r\n");
+                              break;
+              
+                          default:
+                              // print out current state
+                              print_str("Port ");
+                              print_dec(fport);
+              
+                              if (read_eee_conf_mode(iport)) {
+                                  print_str(": Enabled");
+                              } else {
+                                  print_str(": Disabled");
+                              }
+              #if TRANSIT_LLDP
+                              if (lldp_os_get_admin_status(fport)) {
+                                  print_str(" w LLDP");
+              #if TRANSIT_EEE_LLDP
+                                  if(lldp_os_get_optional_tlv_enabled(LLDP_TLV_ORG_EEE_TLV)) {
+                                      print_str(" EEE tlv");
+                                  } else {
+                                      print_str(" No EEE tlv");
+                                  }
+              #endif /* TRANSIT_EEE_LLDP */
+                              } else {
+                                  print_str(" w/o LLDP");
+                              }
+              #endif /* TRANSIT_LLDP */
+                              print_cr_lf();
+                              break;
+                          }
+                      }
+                      print_cr_lf();
+                      break;
+              #endif /* TRANSIT_EEE */
+1261   2      
+1262   2          case 'X': /* Reboot device */
+1263   2              h2_reset();
+1264   2              break;
+1265   2      
+1266   2      #if TRANSIT_LLDP
+                  case 'G': /* LLDP configuration */
+                      if (parms_no == 1) {
+                          switch((uchar) parms[0]) {
+                          case 0: /* set disable */
+                              for(parms[1] = MIN_PORT; parms[1] < MAX_PORT; parms[1]++) {
+                                  lldp_os_set_admin_status((uchar)parms[1], LLDP_DISABLED);
+                              }
+              #if TRANSIT_BPDU_PASS_THROUGH
+                              h2_bpdu_t_registration(0x0E, FALSE);
+              #endif
+                              break;
+                          case 1: /* set enable */
+                              for(parms[1] = MIN_PORT; parms[1] < MAX_PORT; parms[1]++) {
+                                  lldp_os_set_admin_status((uchar)parms[1], LLDP_ENABLED_RX_TX);
+                              }
+              #if TRANSIT_BPDU_PASS_THROUGH
+                              h2_bpdu_t_registration(0x0E, TRUE);
+              #endif
+                              break;
+              #if TRANSIT_EEE_LLDP
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 22  
+
+                          case 2: /* Remove LLDP EEE tlv */
+                              lldp_os_set_optional_tlv(LLDP_TLV_ORG_EEE_TLV, 0);
+                              break;
+                          case 3: /* Add LLDP EEE tlv */
+                              lldp_os_set_optional_tlv(LLDP_TLV_ORG_EEE_TLV, 1);
+                              break;
+              #endif
+                          default:
+                              return FORMAT_ERROR;
+                          }
+                          break;
+                      }
+              #if UNMANAGED_LLDP_DEBUG_IF
+                      cmd_print_lldp_remoteinfo();
+              #endif
+                      break;
+              #endif
+1304   2      
+1305   2      #ifndef VTSS_COMMON_NDEBUG
+                  case 'B': /* debug level */
+                      if(((uchar) parms[0] <= VTSS_COMMON_TRLVL_RACKET) &&
+                              ((uchar) parms[0] >= VTSS_COMMON_TRLVL_ERROR)) {
+                          update_debug_lvl((uchar) parms[0]);
+                      }
+                      break;
+              #endif
+1313   2      
+1314   2      #if UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF
+                  case 'C': /* Run veriphy */
+                      if (parms_no == 0) {
+                          cmd_run_veriphy(NO_OF_BOARD_PORTS); // Run veriphy on all ports
+                      } else if (parms_no == 1 && parms[0] < NO_OF_BOARD_PORTS) {
+                          cmd_run_veriphy(uport2iport(parms[0]));
+                      } else {
+                          return FORMAT_ERROR;
+                      }
+                      break;
+              #endif
+1325   2      
+1326   2      #if !defined(BRINGUP)
+1327   2          case 'S': /* Suspend/Resume applications */
+1328   2              switch ((uchar) parms[0]) {
+1329   3              case 0:
+1330   3                  /* Resume */
+1331   3                  sysutil_set_suspend(FALSE);
+1332   3                  break;
+1333   3              case 1:
+1334   3                  /* Suspend */
+1335   3                  sysutil_set_suspend(TRUE);
+1336   3                  break;
+1337   3      
+1338   3              default:
+1339   3                  return FORMAT_ERROR;
+1340   3              }
+1341   2              break;
+1342   2      #endif /* BRINGUP */
+1343   2      
+1344   2      #if TRANSIT_UNMANAGED_SWUP
+                  case 'D': /* Dump bytes from SPI flash */
+                      flash_read_bytes(parms[0], parms[1]);
+                      break;
+              #endif
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 23  
+
+1349   2      
+1350   2      #endif /* UNMANAGED_REDUCED_DEBUG_IF */
+1351   2      
+1352   2          default:
+1353   2              return FORMAT_ERROR;
+1354   2          }
+1355   1          return FORMAT_OK;
+1356   1      }
+1357          
+1358          /* ************************************************************************ */
+1359          static uchar retrieve_parms (void)
+1360          /* ------------------------------------------------------------------------ --
+1361           * Purpose     : Retrieve parameters from command string.
+1362           * Remarks     : Module variable cmd_ptr must have been set to point to first
+1363           *               char after the command in the command string, when this function
+1364           *               is called.
+1365           *               The module variables parms_no and parms are updated with
+1366           *               actual number of parameters and the actual parameter values.
+1367           *               Returns 0, if successful, otherwise <> 0.
+1368           * Restrictions:
+1369           * See also    :
+1370           * Example     :
+1371           ****************************************************************************/
+1372          {
+1373   1          uchar ch;
+1374   1          uchar base;
+1375   1          uchar j;
+1376   1          uchar no_of_digits;
+1377   1          uchar digits [10];
+1378   1          ulong parm_bin;
+1379   1      
+1380   1          ch = *cmd_ptr;
+1381   1          if ((ch != ' ') && (ch != CLI_CR)) {
+1382   2              return FORMAT_ERROR;
+1383   2          }
+1384   1      
+1385   1      
+1386   1          parms_no = 0;
+1387   1          /* Preset parms to ff's, which may be used as default indication */
+1388   1          memset(parms, 0xff, sizeof(parms));
+1389   1      
+1390   1          /*
+1391   1          ** Retrieve parameters one by one.
+1392   1          */
+1393   1          for (;;) {
+1394   2      
+1395   2              skip_spaces();
+1396   2              base = 10; /* default parameter is specified in decimal */
+1397   2              no_of_digits = 0;
+1398   2      
+1399   2              /*
+1400   2              ** Check if any hex prefix
+1401   2              */
+1402   2              if (*cmd_ptr == '0' && (conv_to_upper_case(*(cmd_ptr + 1)) == 'X')) {
+1403   3                  base = 16; /* parameter is specified in hex */
+1404   3                  cmd_ptr += 2;
+1405   3                  if (*cmd_ptr == ' ') {
+1406   4                      return FORMAT_ERROR;
+1407   4                  }
+1408   3              }
+1409   2      
+1410   2              /*
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 24  
+
+1411   2              ** Retrieve digits until delimiter (space or CR) and then convert
+1412   2              ** parameter to binary
+1413   2              */
+1414   2              for (;;) {
+1415   3      
+1416   3                  ch = *cmd_ptr;
+1417   3      
+1418   3                  if ((ch == ' ') || (ch == CLI_CR)) {
+1419   4      
+1420   4                      if (no_of_digits > 0) {
+1421   5                          parm_bin = 0;
+1422   5                          for (j = 0; j < no_of_digits; j++) {
+1423   6                              parm_bin = (parm_bin * base) + digits[j];
+1424   6                          }
+1425   5                          if (parms_no < CLI_MAX_NO_OF_PARMS) {
+1426   6                              parms[parms_no++] = parm_bin;
+1427   6                          }
+1428   5                      }
+1429   4                      /* End processing at end of command string */
+1430   4                      if (ch == CLI_CR) {
+1431   5                          return FORMAT_OK;
+1432   5                      }
+1433   4                      break; /* go get new parameter */
+1434   4                  } else {
+1435   4      
+1436   4                      ch = ascii_to_hex_nib(ch);
+1437   4                      if (ch != 0xff) {
+1438   5                          if (no_of_digits < 10) {
+1439   6                              digits[no_of_digits++] = ch;
+1440   6                              if (ch > 9) {
+1441   7                                  base = 16; /* parameter is specified in hex */
+1442   7                              }
+1443   6                          }
+1444   5                      } else {
+1445   5                          return FORMAT_ERROR;
+1446   5                      }
+1447   4                  }
+1448   3                  cmd_ptr++;
+1449   3              }
+1450   2          }
+1451   1      }
+1452          
+1453          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+1454          /* ************************************************************************ */
+1455          static uchar retrieve_str_parms (void)
+1456          /* ------------------------------------------------------------------------ --
+1457           * Purpose     : Retrieve parameters from command string.
+1458           * Remarks     : Module variable cmd_ptr must have been set to point to first
+1459           *               char after the command in the command string, when this function
+1460           *               is called.
+1461           *               The module variables parms_no and parms are updated with
+1462           *               actual number of parameters and the actual parameter values.
+1463           *               Returns 0, if successful, otherwise <> 0.
+1464           * Restrictions:
+1465           * See also    :
+1466           * Example     :
+1467           ****************************************************************************/
+1468          {
+1469   1          uchar ch;
+1470   1          uchar j;
+1471   1      
+1472   1          ch = *cmd_ptr;
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 25  
+
+1473   1          if ((ch != ' ') && (ch != CLI_CR)) {
+1474   2              return FORMAT_ERROR;
+1475   2          }
+1476   1      
+1477   1          parms_no = 0;
+1478   1          for(parms_no = 0; parms_no < CLI_MAX_NO_OF_PARMS; parms_no++) {
+1479   2              skip_spaces();
+1480   2              str_parms[parms_no].str = cmd_ptr;
+1481   2              str_parms[parms_no].len = 0;
+1482   2              while(1) {
+1483   3                  if(*cmd_ptr == CLI_CR) { /* Enter Key */
+1484   4                      *cmd_ptr = '\0';
+1485   4                      for(j = parms_no + 1; j < CLI_MAX_NO_OF_PARMS; j++) {
+1486   5                          str_parms[j].str = cmd_ptr;
+1487   5                          str_parms[j].len = 0;
+1488   5                      }
+1489   4                      return FORMAT_OK;
+1490   4                  }
+1491   3                  if(*cmd_ptr == ' ') { /* Space Key */
+1492   4                      *cmd_ptr = '\0'; // string null end sign
+1493   4                      cmd_ptr++;
+1494   4                      break;
+1495   4                  }
+1496   3                  str_parms[parms_no].len++;
+1497   3                  cmd_ptr++;
+1498   3              }
+1499   2          }
+1500   1          return FORMAT_OK;
+1501   1      }
+1502          #endif
+1503          
+1504          #ifndef VTSS_COMMON_NDEBUG
+              static void update_debug_lvl(uchar lvl)
+              {
+                  vtss_os_trace_level = lvl;
+              }
+              #endif
+1510          
+1511          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+1512          static uchar cmd_retrieve_mac_addr (uchar *mac_addr_str, uchar * mac_addr)
+1513          /* ------------------------------------------------------------------------ --
+1514           * Purpose     : Retrieve MAC value from command string.
+1515           * Remarks     : Module variable cmd_ptr must have been set to point to first
+1516           *               non-space char after the "config mac" command in the command string,
+1517           *               when this function is called.
+1518           *               The retrieved MAC address is returned in module variable cmd_mac_addr
+1519           * Restrictions:
+1520           * See also    :
+1521           * Example     :
+1522           ****************************************************************************/
+1523          {
+1524   1          uchar j;
+1525   1          uchar k;
+1526   1          uchar ch;
+1527   1          uchar *ptr = mac_addr_str;
+1528   1      
+1529   1          for (j = 0; j < 6; j++) {
+1530   2              for (k = 0; k < 2; k++) {
+1531   3                  ch = *ptr;
+1532   3                  ptr++;
+1533   3      
+1534   3                  ch = ascii_to_hex_nib(ch);
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 26  
+
+1535   3                  if (ch == 0xff) {
+1536   4                      return FORMAT_ERROR;
+1537   4                  }
+1538   3      
+1539   3                  mac_addr[j] = (mac_addr[j] << 4) | ch;
+1540   3              }
+1541   2      
+1542   2              if (j < 5) {
+1543   3                  ch = *ptr;
+1544   3                  if (ascii_to_hex_nib(ch) == 0xff) {
+1545   4                      ptr++;
+1546   4                      if ((ch != '-') && (ch != ':') && (ch != '.')) {
+1547   5                          return FORMAT_ERROR;
+1548   5                      }
+1549   4                  }
+1550   3              }
+1551   2          }
+1552   1          if(*ptr != '\0') {
+1553   2              return FORMAT_ERROR;
+1554   2          }
+1555   1      
+1556   1          return FORMAT_OK;
+1557   1      }
+1558          #endif
+1559          
+1560          /* ************************************************************************ */
+1561          static void skip_spaces (void)
+1562          /* ------------------------------------------------------------------------ --
+1563           * Purpose     : Adjust cmd_ptr to point to next char different from space.
+1564           * Remarks     :
+1565           * Restrictions:
+1566           * See also    :
+1567           * Example     :
+1568           ****************************************************************************/
+1569          {
+1570   1          while (*cmd_ptr == ' ') {
+1571   2              cmd_ptr++;
+1572   2          }
+1573   1      }
+1574          
+1575          #if UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF
+              /* ************************************************************************ */
+              static void print_veriphy_status (uchar status)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     :
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  code std_txt_t status_txt_tab [16] = {
+                      TXT_NO_VERIPHY_OK,       /*  0, Correctly terminated pair */
+                      TXT_NO_VERIPHY_OPEN,     /*  1, Open pair */
+                      TXT_NO_VERIPHY_SHORT,    /*  2, Shorted pair */
+                      TXT_NO_VERIPHY_FAULT,    /*  3, not used */
+                      TXT_NO_VERIPHY_ABNORMAL, /*  4, Abnormal termination */
+                      TXT_NO_VERIPHY_FAULT,    /*  5, not used */
+                      TXT_NO_VERIPHY_FAULT,    /*  6, not used */
+                      TXT_NO_VERIPHY_FAULT,    /*  7, not used */
+                      TXT_NO_VERIPHY_XA,       /*  8, Cross-pair short to pair A */
+                      TXT_NO_VERIPHY_XB,       /*  9, Cross-pair short to pair B */
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 27  
+
+                      TXT_NO_VERIPHY_XC,       /* 10, Cross-pair short to pair C */
+                      TXT_NO_VERIPHY_XD,       /* 11, Cross-pair short to pair D */
+                      TXT_NO_VERIPHY_XCPLA,    /* 12, Abnormal cross-pair coupling with pair A */
+                      TXT_NO_VERIPHY_XCPLB,    /* 13, Abnormal cross-pair coupling with pair B */
+                      TXT_NO_VERIPHY_XCPLC,    /* 14, Abnormal cross-pair coupling with pair C */
+                      TXT_NO_VERIPHY_XCPLD,    /* 15, Abnormal cross-pair coupling with pair D */
+                  };
+                  print_txt(status_txt_tab[status]);
+              
+              }
+              
+              static void cmd_run_veriphy(vtss_iport_no_t iport)
+              {
+                  uchar port_no;
+                  uchar j;
+                  uchar errors = 0;
+                  port_bit_mask_t iport_mask;
+                  BOOL    done = FALSE;
+                  vtss_uport_no_t uport_idx;
+                  vtss_iport_no_t iport_idx;
+                  vtss_cport_no_t chip_port;
+                  /* veriphy_parms_t xdata veriphy_parms [NO_OF_CHIP_PORTS]; */
+                  veriphy_parms_t xdata *veriphy_parms = (veriphy_parms_t *) rx_packet;
+              
+                  // Fill iport_mask
+                  if (iport == NO_OF_BOARD_PORTS) {
+                      for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+                          WRITE_PORT_BIT_MASK(iport, 1, &iport_mask);
+                      }
+                  } else {
+                      WRITE_PORT_BIT_MASK(iport, 1, &iport_mask);
+                  }
+              
+                  // Start VeriPhy
+                  for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+                      chip_port = iport2cport(iport_idx);
+                      if (TEST_PORT_BIT_MASK(iport_idx, &iport_mask) && phy_map(chip_port)) {
+                          /* Read PHY id to determine action */
+                          veriphy_start(chip_port); // Starting veriphy for selected port(s)
+                      }
+                  }
+              
+                  // Pulling Verphy until Veriphy is done
+                  for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+                      chip_port = iport2cport(iport_idx);
+                      phy_page_std(chip_port);//read phy status register
+                      if (TEST_PORT_BIT_MASK(iport_idx, &iport_mask) && phy_map(chip_port)) {
+                          done = FALSE;
+                          while (!done) {
+                              veriphy_run(chip_port, (veriphy_parms + chip_port), &done);
+                          }
+                      } else { //For Non-Test port, set link status as "OPEN"
+                          veriphy_parms[chip_port].loc[0] = 0;
+                          veriphy_parms[chip_port].loc[1] = 0;
+                          veriphy_parms[chip_port].loc[2] = 0;
+                          veriphy_parms[chip_port].loc[3] = 0;
+                          veriphy_parms[chip_port].stat[0] = 1;
+                          veriphy_parms[chip_port].stat[1] = 1;
+                          veriphy_parms[chip_port].stat[2] = 1;
+                          veriphy_parms[chip_port].stat[3] = 1;
+                          veriphy_parms[chip_port].flags = 0;
+                      }
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 28  
+
+                  }
+              
+                  /* Print header, order by uport
+                   */
+                  print_txt(TXT_NO_VERIPHY_STAT_HDR);
+                  for (uport_idx = 1; uport_idx < NO_OF_BOARD_PORTS; uport_idx++) {
+                      chip_port = uport2cport(uport_idx);
+                      iport_idx = uport2iport(uport_idx);
+                      if (TEST_PORT_BIT_MASK(iport_idx, &iport_mask) && phy_map(chip_port) ) {
+                          print_dec_16_right(uport_idx, 2);
+                          print_ch(':');
+                          print_spaces(3);
+                          /* Valid */
+                          if ((veriphy_parms + chip_port)->flags) {
+                              print_str("yes");
+                          } else {
+                              print_str("no ");
+                          }
+                          print_spaces(2);
+              
+                          /* Length or distance to fault for each pair */
+                          for (j = 0; j < 4; j++) {
+                              print_spaces(3);
+              
+                              if ((veriphy_parms + chip_port)->loc[j] != 0xff) {
+                                  print_dec_16_right(veriphy_parms[chip_port].loc[j], 3);
+                              } else {
+                                  print_str("  -");
+                              }
+                          }
+              
+                          /* Status for each pair */
+              
+                          for (j = 0; j < 4; j++) {
+                              print_spaces(2);
+                              print_veriphy_status((veriphy_parms + chip_port)->stat[j]);
+              #if FRONT_LED_PRESENT
+                              if ((veriphy_parms + chip_port)->stat[j]) {
+                                  errors = 1;
+                                  /* Set Error Leds */
+                                  led_port_event_set(iport_idx, VTSS_LED_EVENT_VERIPHY_ERR, VTSS_LED_MODE_BLINK_YELLOW);
+                              }
+              #endif // FRONT_LED_PRESENT
+                          }
+                          print_cr_lf();
+                      }
+                  }
+              
+              #if FRONT_LED_PRESENT
+                  if (errors) {
+                      delay_1(3000); // Show error state for 3 seconds
+                      for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+                          chip_port = iport2cport(port_no);
+              
+                          if (TEST_PORT_BIT_MASK(iport_idx, &iport_mask) && phy_map(chip_port)) {
+                              led_port_event_set(iport_idx, VTSS_LED_EVENT_VERIPHY_ERR, VTSS_LED_MODE_NORMAL);
+                          }
+                      }
+                  }
+              #endif // FRONT_LED_PRESENT
+              }
+              #endif // UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 29  
+
+1721          
+1722          #if TRANSIT_LLDP
+              #if UNMANAGED_LLDP_DEBUG_IF
+              static void report_remote_entry_val (std_txt_t txt_no, lldp_tlv_t lldp_field, lldp_remote_entry_t xdata * 
+             -entry)
+              {
+              
+                  print_txt_left(txt_no, 15);
+                  if(txt_len(txt_no) >= 15) {
+                      print_spaces(1);
+                  }
+              
+                  lldp_remote_tlv_to_string(entry, lldp_field, rx_packet);
+                  println_str(rx_packet);
+                  rx_packet[0] = 0;
+              }
+              
+              static void cmd_print_lldp_remoteinfo (void)
+              {
+                  uchar i, max;
+                  lldp_remote_entry_t xdata * entry;
+                  uchar ext_port;
+                  uchar found = FALSE;
+              
+              
+                  for(ext_port = 1; ext_port < NO_OF_BOARD_PORTS; ext_port++) {
+                      max = lldp_remote_get_max_entries();
+                      for(i = 0; i < max; i++) {
+                          entry = lldp_get_remote_entry(i);
+                          if((entry->in_use) && (entry->receive_port == ext_port)) {
+                              found = TRUE;
+                              print_txt(TXT_NO_LLDP_LOCAL_PORT);
+                              print_ch(':');
+                              print_spaces(4);
+                              print_dec(ext_port);
+                              print_cr_lf();
+              
+                              print_txt_left(TXT_NO_LLDP_CHASSIS_TYPE, 15);
+                              lldp_chassis_type_to_string(entry, rx_packet);
+                              println_str(rx_packet);
+              
+                              report_remote_entry_val(TXT_NO_LLDP_CHASSIS_ID, LLDP_TLV_BASIC_MGMT_CHASSIS_ID, entry);
+              
+                              print_txt_left(TXT_NO_LLDP_PORT_TYPE, 15);
+                              lldp_port_type_to_string(entry, rx_packet);
+                              println_str(rx_packet);
+              
+                              report_remote_entry_val(TXT_NO_LLDP_PORT_ID, LLDP_TLV_BASIC_MGMT_PORT_ID, entry);
+                              report_remote_entry_val(TXT_NO_LLDP_SYSTEM_NAME, LLDP_TLV_BASIC_MGMT_SYSTEM_NAME, entry);
+                              report_remote_entry_val(TXT_NO_LLDP_SYSTEM_DESCR, LLDP_TLV_BASIC_MGMT_SYSTEM_DESCR, entry)
+             -;
+                              report_remote_entry_val(TXT_NO_LLDP_PORT_DESCR, LLDP_TLV_BASIC_MGMT_PORT_DESCR, entry);
+                              report_remote_entry_val(TXT_NO_LLDP_SYSTEM_CAPA, LLDP_TLV_BASIC_MGMT_SYSTEM_CAPA, entry);
+                              report_remote_entry_val(TXT_NO_LLDP_MGMT_ADDR, LLDP_TLV_BASIC_MGMT_MGMT_ADDR, entry);
+              #if UNMANAGED_EEE_DEBUG_IF
+                              report_remote_entry_val(TXT_NO_EEE_STAT, LLDP_TLV_ORG_EEE_TLV, entry);
+              #endif
+              #ifndef NDEBUG
+                              print_str("TTL: ");
+                              print_dec(entry->rx_info_ttl);
+                              print_cr_lf();
+              #endif
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 30  
+
+              
+                              print_cr_lf();
+                          }
+                      }
+                  }
+              
+                  if(!found) {
+                      println_str(TXT_NO_LLDP_NO_ENTRIES);
+                  }
+              }
+              #endif
+              #endif
+1793          
+1794          #if TRANSIT_FAN_CONTROL
+              #if UNMANAGED_FAN_DEBUG_IF
+              static void handle_fan_control (void)
+              {
+                  // Get the chip temperature
+                  fan_local_status_t status;
+              
+                  print_str("Temp Max.");
+                  print_dec_16_right(read_fan_conf_t_max(), 5);
+                  print_str("C, ");
+                  print_str("Temp On  ");
+                  print_dec_16_right(read_fan_conf_t_on (), 5);
+                  println_str("C.");
+              
+                  fan_get_local_status(&status);
+                  print_str("Chip Temp.  ");
+                  print_dec_16_right(status.chip_temp, 5);
+                  print_str("C, ");
+                  print_str("Fan Speed set to ");
+                  print_dec_16_right(status.fan_speed_setting_pct, 5);
+                  print_str("%, ");
+                  print_str("Fan Speed  ");
+                  print_dec_16_right(status.fan_speed, 5);
+                  println_str("RPM.");
+              
+              }
+              #endif
+              #endif
+1822          
+1823          #if TRANSIT_THERMAL
+              static void print_chips_temp (void)
+              {
+                  print_txt(TXT_NO_TEMPERATURE);
+                  print_str(": ");
+                  parms[0] = phy_read_temp_reg(0);
+                  parms[1] = (71*parms[0]) / 100;
+                  if(parms[1] > 135) {
+                      print_str("Reg: ");
+                      print_hex_prefix();
+                      print_hex_w((ushort) parms[0]);
+                  } else {
+                      parms[0] = 135 - parms[1];
+                      print_dec(parms[0]);
+                      print_str(" C");
+                  }
+              #if defined(LUTON26_L25)
+                  print_str(", ");
+                  parms[0] = phy_read_temp_reg(12);
+                  parms[1] = (71*parms[0]) / 100;
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 31  
+
+                  if(parms[1] > 135) {
+                      print_str("Reg: ");
+                      print_hex_prefix();
+                      print_hex_w((ushort) parms[0]);
+                  } else {
+                      parms[0] = 135 - parms[1];
+                      print_dec(parms[0]);
+                      print_str(" C");
+                  }
+              #endif
+              
+                  print_cr_lf();
+              }
+              #endif /* TRANSIT_THERMAL */
+1857          
+1858          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+1859          static uchar handle_sys_config (void)
+1860          {
+1861   1          uchar ret;
+1862   1          mac_addr_t mac_addr;
+1863   1      
+1864   1      #if TRANSIT_LACP   
+                  vtss_lacp_system_config_t system_config;
+              #endif
+1867   1          ret = retrieve_str_parms();
+1868   1          if(ret != FORMAT_OK) {
+1869   2              return ret;
+1870   2          }
+1871   1      
+1872   1          if(!str_parms[0].len) {
+1873   2              /* Dump all configurations */
+1874   2              flash_read_mac_addr(&mac_addr);
+1875   2              print_mac_addr(mac_addr);
+1876   2              print_cr_lf();
+1877   2          } else {
+1878   2              if(cmp_cmd_txt(CMD_TXT_NO_MAC, str_parms[0].str))  {
+1879   3                  /* Update MAC addresses in RAM */
+1880   3                  ret = cmd_retrieve_mac_addr(str_parms[1].str, (uchar *)mac_addr);
+1881   3                  if(ret != FORMAT_OK) {
+1882   4                      return ret;
+1883   4                  }
+1884   3                  if(mac_cmp(mac_addr, mac_addr_0) == 0 ||
+1885   3                          mac_addr[0] & 0x01)
+1886   3                      return FORMAT_ERROR;
+1887   3      
+1888   3                  flash_write_mac_addr(&mac_addr);
+1889   3      
+1890   3      #if TRANSIT_LLDP
+                          lldp_something_changed_local();
+              #endif
+1893   3      
+1894   3      #if TRANSIT_LACP
+                          vtss_lacp_get_config(&system_config);
+                          mac_copy(system_config.system_id.macaddr, mac_addr);
+                          vtss_lacp_set_config(&system_config);
+              #endif
+1899   3      
+1900   3      #if TRANSIT_SPI_FLASH
+                      } else if(cmp_cmd_txt(CMD_TXT_NO_SAVE, str_parms[0].str)) {
+                          /* Program configurations at RAM to flash */
+                          flash_read_mac_addr(&mac_addr);
+                          if(mac_cmp(mac_addr, mac_addr_0) == 0 || mac_cmp(mac_addr, spiflash_mac_addr) == 0 ||
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 32  
+
+                                  mac_addr[0] & 0x01)
+                              return FORMAT_ERROR;
+                          flash_program_config();
+              #endif // TRANSIT_SPI_FLASH
+1909   3              }
+1910   2          }
+1911   1          return FORMAT_OK;
+1912   1      }
+1913          #endif
+1914          
+1915          #if TRANSIT_UNMANAGED_SWUP
+              /* ************************************************************************ */
+              static uchar cmd_cmp (char *s1, char *s2) small
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Compare a string in RAM with a 0-terminated string in flash memory.
+               * Remarks     : s1 points to string in RAM, s2 points to string in flash.
+               *               Returns 0 if RAM string is equal to the flash string up till, but
+               *               not including the 0-terminator. Otherwise 1 is returned.
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  uchar ch1;
+                  uchar ch2;
+              
+                  for (;;) {
+                      ch2 = *s2;
+                      if (ch2 == 0) {
+                          return 0;
+                      }
+                      s2++;
+              
+                      ch1 = conv_to_upper_case(*s1++);
+                      if (ch1 != ch2) {
+                          return 1;
+                      }
+                  }
+              }
+              #endif
+1945          
+1946          #endif /* NO_DEBUG_IF */
+1947          #if !defined(BRINGUP)
+1948          static void print_phy_model_2_txt(unsigned char model)
+1949          {
+1950   1          switch (model) {
+1951   2              case PHY_MODEL_VTSS_8211:
+1952   2              case PHY_MODEL_VTSS_8221:
+1953   2                  print_n_str("COBRA", 12);
+1954   2              break;
+1955   2              case PHY_MODEL_VTSS_8224:
+1956   2              case PHY_MODEL_VTSS_8234:
+1957   2              case PHY_MODEL_VTSS_8244:
+1958   2                  print_n_str("QUATTRO", 12);
+1959   2              break;
+1960   2              case PHY_MODEL_VTSS_8538:
+1961   2              case PHY_MODEL_VTSS_8558:
+1962   2              case PHY_MODEL_VTSS_8658:
+1963   2                  print_n_str("SPYDER", 12);
+1964   2              break;
+1965   2              case PHY_MODEL_VTSS_8664:
+1966   2                  print_n_str("ENZO", 12);
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 33  
+
+1967   2              break;
+1968   2              case PHY_MODEL_VTSS_7422:
+1969   2                  print_n_str("LUTON26", 12);
+1970   2              break;
+1971   2              case PHY_MODEL_VTSS_8512:
+1972   2                  print_n_str("ATOM", 12);
+1973   2              break;
+1974   2              case PHY_MODEL_VTSS_8504:
+1975   2              case PHY_MODEL_VTSS_8552:
+1976   2                  print_n_str("TESLA", 12);
+1977   2              break;
+1978   2              case PHY_MODEL_VTSS_8514:
+1979   2                   print_n_str("ELISE_8514", 12);
+1980   2              break;
+1981   2              case PHY_MODEL_VTSS_7512:
+1982   2                  print_n_str("FERRET_7512", 12);
+1983   2              break;
+1984   2              case PHY_MODEL_NONE:
+1985   2                  print_n_str("Not PHY", 12);
+1986   2              case PHY_MODEL_UNKNOWN:
+1987   2              default:
+1988   2              print_n_str("Unknown PHY", 12);
+1989   2                  break;
+1990   2          }
+1991   1      }
+1992          static void port_info_format_output(uchar *fdata)
+1993          {
+1994   1          uchar link_mode = fdata[6], speed;
+1995   1      
+1996   1          print_spaces(3);
+1997   1          print_dec_8_right_2(fdata[0]);
+1998   1          print_spaces(4);
+1999   1          print_dec_8_right_2(fdata[1]);
+2000   1          print_spaces(4);
+2001   1          print_dec_8_right_2(fdata[2]);
+2002   1          print_spaces(7);
+2003   1          print_dec_8_right_2(fdata[3]);
+2004   1          print_spaces(6);
+2005   1          print_hex_prefix();
+2006   1          print_hex_b(fdata[4]);
+2007   1          print_spaces(1);
+2008   1          if (phy_map(fdata[2])) {
+2009   2      #if defined(VTSS_ARCH_OCELOT)
+2010   2              // PHY/Serdes model
+2011   2              print_phy_model_2_txt(fdata[5]);
+2012   2              print_spaces(1);
+2013   2      
+2014   2              // CRC uPatch
+2015   2              if (fdata[5] == PHY_MODEL_VTSS_8514 || fdata[5] == PHY_MODEL_VTSS_7512 || fdata[5] == PHY_MODEL_VT
+             -SS_8221 || fdata[5] == PHY_MODEL_VTSS_8211) {
+2016   3                  print_n_str("No uPatch", 11);
+2017   3              }
+2018   2      #endif
+2019   2          } else {
+2020   2              // PHY/Serdes model
+2021   2              if (fdata[3] == MAC_IF_SFP_MSA_DETECTED) {
+2022   3                  print_n_str("Auto SFP", 12);
+2023   3              } else if (fdata[3] == MAC_IF_100FX) {
+2024   3                  print_n_str("100M SFP", 12);
+2025   3              } else if (fdata[3] == MAC_IF_SERDES_1G) {
+2026   3                  print_n_str("1G SFP", 12);
+2027   3              } else if (fdata[3] == MAC_IF_SERDES_2_5G) {
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 34  
+
+2028   3                  print_n_str("2.5G SFP", 12);
+2029   3              } else {
+2030   3                  print_n_str("-", 12);
+2031   3              }
+2032   2              print_spaces(1);
+2033   2              
+2034   2              // CRC uPatch
+2035   2              print_n_str("Not PHY", 11);
+2036   2          }
+2037   1          print_spaces(1);
+2038   1      
+2039   1          // Link mode
+2040   1          if (link_mode == LINK_MODE_DOWN) {
+2041   2              print_str("Down");
+2042   2          } else {
+2043   2              print_str("Up - ");
+2044   2              speed = link_mode & LINK_MODE_SPEED_MASK;
+2045   2              if (speed == LINK_MODE_SPEED_10) {
+2046   3                  print_str("10M");
+2047   3              } else if (speed == LINK_MODE_SPEED_100) {
+2048   3                  print_str("100M");
+2049   3              } else if (speed == LINK_MODE_SPEED_1000) {
+2050   3                  print_str("1G");
+2051   3              } else if (speed == LINK_MODE_SPEED_2500) {
+2052   3                  print_str("2.5G");
+2053   3              } else {
+2054   3                  print_str("Unknown");
+2055   3              }
+2056   2              if (link_mode & LINK_MODE_FDX_MASK) {
+2057   3                  print_str("FDX");
+2058   3              } else {
+2059   3                  print_str("HDX");
+2060   3              }
+2061   2      
+2062   2              // Flow control status
+2063   2              print_spaces(1);
+2064   2              print_str("FC(");
+2065   2              print_str(fdata[7] ? "E)" : "D)");
+2066   2          }
+2067   1          print_cr_lf();
+2068   1      }
+2069          
+2070          static void cli_show_port_info(void)
+2071          {
+2072   1          phy_id_t        phy_id;
+2073   1          vtss_uport_no_t uport_idx = 0;
+2074   1          vtss_iport_no_t iport = 0;
+2075   1          vtss_cport_no_t chip_port = 0;
+2076   1          uchar           fdata[8];
+2077   1          ulong           reg_val;
+2078   1      
+2079   1          print_str("uPort");
+2080   1          print_spaces(1);
+2081   1          print_str("iPort");
+2082   1          print_spaces(1);
+2083   1          print_str("cPort");
+2084   1          print_spaces(1);
+2085   1          print_str("MIIM Bus");
+2086   1          print_spaces(1);
+2087   1          print_str("MIIM Addr");
+2088   1          print_spaces(3);
+2089   1          print_str("PHY/Serdes");
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 35  
+
+2090   1          print_spaces(2);
+2091   1      #if defined(VTSS_ARCH_OCELOT)
+2092   1          print_str("CRC uPatch");
+2093   1          print_spaces(1);
+2094   1      #endif
+2095   1          println_str("Link Status");
+2096   1          print_line(78);
+2097   1          print_cr_lf();
+2098   1      
+2099   1          for (uport_idx = 1; uport_idx <= NO_OF_BOARD_PORTS; uport_idx++) {
+2100   2              iport = uport2iport(uport_idx);
+2101   2              chip_port = iport2cport(iport);
+2102   2              phy_read_id(chip_port, &phy_id);
+2103   2              fdata[0] = uport_idx;
+2104   2              fdata[1] = iport;
+2105   2              fdata[2] = chip_port;
+2106   2              fdata[3] = phy_map_miim_no(chip_port);
+2107   2              fdata[4] = phy_map_phy_no(chip_port);
+2108   2              fdata[5] = phy_id.model;
+2109   2              fdata[6] = port_link_mode_get(chip_port);
+2110   2              H2_READ(VTSS_SYS_PAUSE_CFG_MAC_FC_CFG(chip_port), reg_val);
+2111   2              fdata[7] = VTSS_X_SYS_PAUSE_CFG_MAC_FC_CFG_TX_FC_ENA(reg_val) ? 1 : 0;
+2112   2              port_info_format_output(fdata);
+2113   2          }
+2114   1      }
+2115          #endif
+2116          
+2117          #ifndef NO_DEBUG_IF
+2118          
+2119          #if TRANSIT_UNMANAGED_MAC_OPER_GET
+2120          /* Show MAC address entries, chip_port=0xFF for all ports */
+2121          static void cli_show_mac_addr(vtss_cport_no_t chip_port)
+2122          {
+2123   1          mac_tab_t mac_tab_entry;
+2124   1          BOOL is_ipmc_entry;
+2125   1          ulong status, total_cnt = 0;
+2126   1      
+2127   1          mac_tab_entry.vid = 0;
+2128   1          mac_tab_entry.mac_addr[0] = mac_tab_entry.mac_addr[1] = mac_tab_entry.mac_addr[2] = mac_tab_entry.mac_
+             -addr[3] = mac_tab_entry.mac_addr[4] = mac_tab_entry.mac_addr[5] = 0;
+2129   1      
+2130   1          while(1) {
+2131   2              status = h2_mactab_get_next(&mac_tab_entry, &is_ipmc_entry, TRUE);
+2132   2              if (status == 0xFFFFFFFF) {
+2133   3                  break;
+2134   3              }
+2135   2      
+2136   2              if (chip_port != 0xFF && !TEST_PORT_BIT_MASK(chip_port, &mac_tab_entry.port_mask)) {
+2137   3                  continue;
+2138   3              }
+2139   2      
+2140   2              total_cnt++;
+2141   2      
+2142   2              // Show MAC address
+2143   2              print_mac_addr(mac_tab_entry.mac_addr);
+2144   2              print_spaces(2);
+2145   2      
+2146   2              // Show VLAN ID, not used on unmanaged project
+2147   2              //print_dec_16_right(mac_tab_entry.vid, 4);
+2148   2              //print_spaces(2);
+2149   2      
+2150   2              // Show MAC address entry mode (static/dynamic)
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 36  
+
+2151   2              print_str(VTSS_X_ANA_ANA_TABLES_MACACCESS_ENTRY_TYPE(status) ? "S" : "D");
+2152   2              print_spaces(2);
+2153   2      
+2154   2              // Show IPMC
+2155   2              print_str(is_ipmc_entry ? "IPMC" : "    ");
+2156   2              print_spaces(2);
+2157   2      
+2158   2              // Show CPU
+2159   2              //print_str(VTSS_X_ANA_ANA_AGENCTRL_LEARN_SRC_KILL(status) ? "CPU" : "   ");
+2160   2              //print_spaces(2);
+2161   2      
+2162   2              // Show portmask
+2163   2              print_port_list(mac_tab_entry.port_mask);
+2164   2              print_cr_lf();
+2165   2          };
+2166   1      
+2167   1          // Show total count
+2168   1          print_cr_lf();
+2169   1          print_str("Total count = ");
+2170   1          print_dec(total_cnt);
+2171   1          print_cr_lf();
+2172   1      }
+2173          #endif // TRANSIT_UNMANAGED_MAC_OPER_GET
+2174          
+2175          /* ************************************************************************ */
+2176          static void cli_show_sw_ver(void)
+2177          /* ------------------------------------------------------------------------ --
+2178           * Purpose     :
+2179           * Remarks     :
+2180           * Restrictions:
+2181           * See also    :
+2182           * Example     :
+2183           ****************************************************************************/
+2184          {
+2185   1      #if defined(BRINGUP)
+                  return;
+              #else
+2188   1      #ifndef UNMANAGED_REDUCED_DEBUG_IF
+2189   1          vtss_cport_no_t chip_port;
+2190   1          uchar port_ext;
+2191   1          //ushort dat;
+2192   1      #endif
+2193   1      
+2194   1          /* Chip Family */
+2195   1          sysutil_show_chip_id();
+2196   1      
+2197   1          /* Software version */
+2198   1          sysutil_show_sw_ver();
+2199   1      
+2200   1          /* Image build time */
+2201   1          sysutil_show_compile_date();
+2202   1      
+2203   1          /* HW Revision */
+2204   1          sysutil_show_hw_ver();
+2205   1      
+2206   1      #if defined(JUMBO)
+2207   1          print_str("MaxFrame Size   :");
+2208   1          print_spaces(1);
+2209   1          print_dec(MAX_FRAME_SIZE);
+2210   1          print_cr_lf();
+2211   1      #endif
+2212   1      
+C51 COMPILER V9.60.0.0   CLIHND                                                            11/30/2021 16:22:23 PAGE 37  
+
+2213   1      #if TRANSIT_THERMAL
+                  /* chip temperature */
+                  print_chips_temp();
+              #endif
+2217   1      
+2218   1      #ifndef UNMANAGED_REDUCED_DEBUG_IF
+2219   1          /* Info about ports */
+2220   1          print_cr_lf();
+2221   1          println_str("uPort SMAC              MIIM PHY");
+2222   1          println_str("----- ----------------- ---- ---");
+2223   1          for (port_ext = 1; port_ext <= NO_OF_BOARD_PORTS; port_ext++) {
+2224   2              chip_port = uport2cport(port_ext);
+2225   2              if(!phy_map(chip_port)
+2226   2      #if MAC_TO_MEDIA
+2227   2                      && !phy_map_serdes(chip_port)
+2228   2      #endif
+2229   2                ) {
+2230   3                  continue;
+2231   3              }
+2232   2              print_spaces(3);
+2233   2              print_dec_8_right_2(port_ext);
+2234   2              print_spaces(1);
+2235   2      
+2236   2              /* mac address, to be modified */
+2237   2              print_port_mac_addr(chip_port);
+2238   2              print_spaces(2);
+2239   2      
+2240   2              /* miim and phy number */
+2241   2              print_spaces(1);
+2242   2              print_dec_8_right_2(phy_map_miim_no(chip_port));
+2243   2              print_spaces(1);
+2244   2              print_dec_8_right_2(phy_map_phy_no(chip_port));
+2245   2              print_cr_lf();
+2246   2          }
+2247   1      #endif
+2248   1      #endif /* BRINGUP */
+2249   1      }
+2250          #endif
+2251          
+2252          /****************************************************************************/
+2253          /*                                                                          */
+2254          /*  End of file.                                                            */
+2255          /*                                                                          */
+2256          /****************************************************************************/
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   3524    ----
+   CONSTANT SIZE    =   1424    ----
+   XDATA SIZE       =     68      87
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       1
+   IDATA SIZE       =     16    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,198 @@
+C51 COMPILER V9.60.0.0   I2C                                                               11/30/2021 16:22:18 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE I2C
+OBJECT MODULE PLACED IN ..\obj\i2c.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\main\i2c.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbond;
+                    -..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_api\
+                    -base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src\e
+                    -ee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PRIN
+                    -T(..\lst\i2c.lst) TABS(2) OBJECT(..\obj\i2c.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include <intrins.h>
+  26          
+  27          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  28          
+  29          #include "vtss_api_base_regs.h"
+  30          #include "h2io.h"
+  31          #include "misc2.h"
+  32          
+  33          #if TRANSIT_SFP_DETECT
+  34          #if USE_SW_TWI
+              
+              #define SDA_BIT_MASK    (1UL << SDA_BIT)
+              #define CLK_BIT_MASK    (1UL << CLK_BIT)
+              #define SDA_BIT_OE_MASK (1UL << SDA_BIT_OE)
+              #define CLK_BIT_OE_MASK (1UL << CLK_BIT_OE)
+              
+              static void scl_set () small
+              {
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT, CLK_BIT_MASK, CLK_BIT_MASK);
+              }
+              
+              static void scl_reset () small
+              {
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT, 0, CLK_BIT_MASK);
+              }
+              
+              static void scl_delay() small
+C51 COMPILER V9.60.0.0   I2C                                                               11/30/2021 16:22:18 PAGE 2   
+
+              {
+                  _nop_();
+                  _nop_();
+                  _nop_();
+                  _nop_();
+              }
+              
+              static void sda_reset() small
+              {
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT, 0, SDA_BIT_MASK);
+              }
+              
+              static void sda_set() small
+              {
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT, SDA_BIT_MASK, SDA_BIT_MASK);
+              }
+              
+              static void sda_dir_in () small
+              {
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OE, 0, SDA_BIT_OE_MASK);
+              }
+              
+              static void sda_dir_out () small
+              {
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OE, SDA_BIT_OE_MASK, SDA_BIT_OE_MASK);
+              }
+              
+              static uchar sda_get () small
+              {
+                  ulong reg;
+                  H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_IN, reg);
+                  if(test_bit_32(SDA_BIT, &reg)) {
+                      return 1;
+                  }
+                  return 0;
+              }
+              
+              void  i2c_start (void)
+              {
+                  H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OE, SDA_BIT_OE_MASK|CLK_BIT_OE_MASK , SDA_BIT_OE_MASK|CLK_BI
+             -T_OE_MASK)
+                  sda_set();
+                  scl_set();
+                  scl_delay();
+              
+                  sda_reset();
+                  scl_delay();
+                  scl_reset();
+              }
+              void  i2c_stop (void)
+              {
+                  sda_reset();
+                  scl_delay();
+                  scl_set();
+                  scl_delay();
+                  sda_set();
+              }
+              
+              uchar i2c_send_byte (uchar d)
+              {
+                  uchar bit_no;
+                  uchar ret;
+C51 COMPILER V9.60.0.0   I2C                                                               11/30/2021 16:22:18 PAGE 3   
+
+                  for(bit_no = 0; bit_no < 8; bit_no++) {
+                      if(test_bit_8((7-bit_no), &d)) {
+                          sda_set();
+                      } else {
+                          sda_reset();
+                      }
+                      scl_set();
+                      scl_delay();
+                      scl_reset();
+                      scl_delay();
+                  }
+                  sda_set();
+                  sda_dir_in();
+                  scl_set();
+                  scl_delay();
+                  ret = sda_get();
+                  scl_reset();
+                  scl_delay();
+                  sda_dir_out();
+              
+                  return ret;
+              }
+              
+              uchar i2c_get_byte (uchar do_ack)
+              {
+                  uchar bit_no;
+                  uchar ret = 0;
+                  sda_set();
+                  sda_dir_in();
+                  for(bit_no = 0; bit_no < 8; bit_no++) {
+                      scl_set();
+                      scl_delay();
+                      ret = (ret << 1) | sda_get();
+                      scl_reset();
+                      scl_delay();
+                  }
+                  sda_dir_out();
+                  if(do_ack) {
+                      sda_reset();
+                  } else {
+                      sda_set();
+                  }
+                  scl_set();
+                  scl_delay();
+                  scl_reset();
+                  scl_delay();
+              
+                  return ret;
+              
+              }
+              #endif /* USE_SW_TWI */
+ 164          #endif /* TRANSIT_SFP_DETECT */
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   ----    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+C51 COMPILER V9.60.0.0   I2C                                                               11/30/2021 16:22:18 PAGE 4   
+
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,398 @@
+C51 COMPILER V9.60.0.0   TIMER                                                             11/30/2021 16:22:16 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE TIMER
+OBJECT MODULE PLACED IN ..\obj\timer.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\main\timer.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbon
+                    -d;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_ap
+                    -i\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src
+                    -\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PR
+                    -INT(..\lst\timer.lst) TABS(2) OBJECT(..\obj\timer.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #include "vtss_api_base_regs.h"
+  27          #include "h2io.h"
+  28          #include "timer.h"
+  29          #if defined(VTSS_ARCH_OCELOT)
+  30          #include "misc2.h"
+  31          #endif // VTSS_ARCH_OCELOT
+  32          
+  33          #pragma NOAREGS
+  34          
+  35          /*****************************************************************************
+  36           *
+  37           *
+  38           * Public data
+  39           *
+  40           *
+  41           *
+  42           ****************************************************************************/
+  43          
+  44          data ushort tick_count = 0;
+  45          bit     ms_10_timeout_flag  = 0;
+  46          bit     ms_100_timeout_flag = 0;
+  47          bit     sec_1_timeout_flag  = 0;
+  48          
+  49          /*****************************************************************************
+  50           *
+  51           *
+C51 COMPILER V9.60.0.0   TIMER                                                             11/30/2021 16:22:16 PAGE 2   
+
+  52           * Defines
+  53           *
+  54           *
+  55           *
+  56           ****************************************************************************/
+  57          
+  58          /*****************************************************************************
+  59           *
+  60           *
+  61           * Typedefs and enums
+  62           *
+  63           *
+  64           *
+  65           ****************************************************************************/
+  66          
+  67          /*****************************************************************************
+  68           *
+  69           *
+  70           * Prototypes for local functions
+  71           *
+  72           *
+  73           *
+  74           ****************************************************************************/
+  75          
+  76          
+  77          /*****************************************************************************
+  78           *
+  79           *
+  80           * Local data
+  81           *
+  82           *
+  83           *
+  84           ****************************************************************************/
+  85          
+  86          static uchar                data timer_count        = 0;
+  87          
+  88          static bit                  sw_timer_active_flag    = FALSE;
+  89          static bit                  ms_1_timeout_flag       = FALSE;
+  90          
+  91          static ulong xdata          time_since_boot_t       = 0;
+  92          
+  93          #if TRANSIT_FTIME
+              static struct timeb xdata   t_now;
+              #endif /* TRANSIT_FTIME */
+  96          
+  97          /*****************************************************************************
+  98           *
+  99           *
+ 100           * Local functions
+ 101           *
+ 102           *
+ 103           *
+ 104           ****************************************************************************/
+ 105          
+ 106          #if TRANSIT_FTIME
+              static void _time_carry()
+              {
+                  struct timeb t;
+              
+                  t = t_now;
+              
+                  t.millitm++;
+C51 COMPILER V9.60.0.0   TIMER                                                             11/30/2021 16:22:16 PAGE 3   
+
+              
+                  if (t.millitm >= 1000) {
+                      t.time    ++;
+                      t.millitm -= 1000;
+                  }
+              
+                  t_now = t;
+              }
+              #endif /* TRANSIT_FTIME */
+ 123          
+ 124          /*****************************************************************************
+ 125           *
+ 126           *
+ 127           * Public functions
+ 128           *
+ 129           *
+ 130           *
+ 131           ****************************************************************************/
+ 132          
+ 133          #if defined(VTSS_ARCH_OCELOT)
+ 134          #define INT_TIMER_1_INDEX   4
+ 135          #endif // VTSS_ARCH_OCELOT
+ 136          
+ 137          /**
+ 138           * Set timer 1 to generate interrupt every 1 msec.
+ 139           */
+ 140          void timer_1_init (void) small
+ 141          {
+ 142   1          /*
+ 143   1           * Important !!!
+ 144   1           *
+ 145   1           * Don't access the switch register via APIs H2_READ()/H2_WRITE()/H2_WRITE_MASKED()
+ 146   1           * before the interrupt mechanism is ready
+ 147   1           */
+ 148   1      
+ 149   1          /* Wrap out every 1ms */
+ 150   1          h2_write(VTSS_ICPU_CFG_TIMERS_TIMER_RELOAD_VALUE(TIMER_1), 0x9);
+ 151   1      
+ 152   1      #if defined(VTSS_ARCH_OCELOT)
+ 153   1      
+ 154   1          /* Output to iCPU_IRQ0 */
+ 155   1          h2_write_masked(VTSS_ICPU_CFG_INTR_DST_INTR_MAP(0),
+ 156   1                          bit_mask_32(INT_TIMER_1_INDEX),
+ 157   1                          bit_mask_32(INT_TIMER_1_INDEX));
+ 158   1      
+ 159   1          /* Enable interrupt source */
+ 160   1          h2_write_masked(VTSS_ICPU_CFG_INTR_INTR_ENA_SET,
+ 161   1                          bit_mask_32(INT_TIMER_1_INDEX),
+ 162   1                          bit_mask_32(INT_TIMER_1_INDEX));
+ 163   1          /* Enable and force reload */
+ 164   1          h2_write(VTSS_ICPU_CFG_TIMERS_TIMER_CTRL(TIMER_1),
+ 166   1                   VTSS_F_ICPU_CFG_TIMERS_TIMER_CTRL_TIMER_ENA(1) |
+ 166   1                   VTSS_F_ICPU_CFG_TIMERS_TIMER_CTRL_FORCE_RELOAD(1));
+ 167   1      
+ 168   1      #elif defined(VTSS_ARCH_LUTON26)
+                  /* Output to iCPU_IRQ0 */
+                  h2_write_masked(VTSS_ICPU_CFG_INTR_TIMER1_INTR_CFG,
+                                  VTSS_F_ICPU_CFG_INTR_TIMER1_INTR_CFG_TIMER1_INTR_SEL(0),
+                                  VTSS_M_ICPU_CFG_INTR_TIMER1_INTR_CFG_TIMER1_INTR_SEL);
+              
+                  /* Enable interrupt source */
+                  h2_write_masked(VTSS_ICPU_CFG_INTR_INTR_ENA,
+C51 COMPILER V9.60.0.0   TIMER                                                             11/30/2021 16:22:16 PAGE 4   
+
+                                  VTSS_F_ICPU_CFG_INTR_INTR_ENA_TIMER1_INTR_ENA,
+                                  VTSS_F_ICPU_CFG_INTR_INTR_ENA_TIMER1_INTR_ENA);
+              
+                  /* Enable and force reload */
+                  h2_write(VTSS_ICPU_CFG_TIMERS_TIMER_CTRL(TIMER_1),
+                           VTSS_F_ICPU_CFG_TIMERS_TIMER_CTRL_TIMER_ENA |
+                           VTSS_F_ICPU_CFG_TIMERS_TIMER_CTRL_FORCE_RELOAD);
+              #endif // VTSS_ARCH_OCELOT
+ 184   1      }
+ 185          
+ 186          
+ 187          /**
+ 188           * Timer interrupt to be activated every 1 msec. Tick SW timers and set flags
+ 189           * accordingly.
+ 190           */
+ 191          void timer_1_interrupt (void) small
+ 192          {
+ 193   1          static uchar data ms_1_count  = 10;
+ 194   1          static uchar data ms_10_count = 10;
+ 195   1          static uchar data ms_100_count = 10;
+ 196   1      
+ 197   1      #if TRANSIT_FTIME
+                  _time_carry();
+              #endif /* TRANSIT_FTIME */
+ 200   1      
+ 201   1          tick_count++;
+ 202   1          ms_1_timeout_flag = TRUE;
+ 203   1      
+ 204   1          if (--ms_1_count == 0) {
+ 205   2              ms_1_count = 10;
+ 206   2      
+ 207   2              /* Request 10 msec jobs to be done */
+ 208   2              ms_10_timeout_flag = 1;
+ 209   2      
+ 210   2              /* If 1 sec elapsed, request 1 sec jobs to be done */
+ 211   2              if (--ms_10_count == 0) {
+ 212   3                  ms_10_count = 10;
+ 213   3      
+ 214   3                  /* If 100 ms elapsed, request 100 ms jobs to be done */
+ 215   3                  ms_100_timeout_flag = TRUE;
+ 216   3      
+ 217   3                  if (--ms_100_count == 0) {
+ 218   4                      ms_100_count = 10;
+ 219   4                      sec_1_timeout_flag = TRUE;
+ 220   4                  }
+ 221   3              }
+ 222   2      
+ 223   2              /* If the delay/timeout timer is active, tick it */
+ 224   2              if (sw_timer_active_flag) {
+ 225   3                  if (--timer_count == 0) {
+ 226   4                      sw_timer_active_flag = FALSE;
+ 227   4                  }
+ 228   3              }
+ 229   2          }
+ 230   1      }
+ 231          
+ 232          
+ 233          /**
+ 234           * Make a delay by means of timer interrupt function.
+ 235           *
+ 236           * delay_in_10_msec specifies delay in granularity of 10 msec. here is no
+ 237           * synchronization with the HW timer, so the actual delay may be +/- 10 msec
+C51 COMPILER V9.60.0.0   TIMER                                                             11/30/2021 16:22:16 PAGE 5   
+
+ 238           * (so specifying 1 (= 10 msec) may result in almost no delay at all).
+ 239           *
+ 240           * @note May only be called when interrupt is enabled. Can not be used
+ 241           *       simultaneously with start_timer/timeout mechanism.
+ 242           */
+ 243          #if !defined(BRINGUP)
+ 244          void delay (uchar delay_in_10_msec) small
+ 245          {
+ 246   1          /* set timer value to be ticked by interrupt function */
+ 247   1          sw_timer_active_flag = FALSE;
+ 248   1          timer_count = delay_in_10_msec;
+ 249   1          sw_timer_active_flag = TRUE;
+ 250   1      
+ 251   1          /* Await that time has elapsed */
+ 252   1          while (sw_timer_active_flag) {
+ 253   2              /* do nothing but wait */
+ 254   2          }
+ 255   1      }
+ 256          #endif /* BRINGUP */
+ 257          
+ 258          /**
+ 259           * Make a delay by means of timer interrupt function.
+ 260           *
+ 261           * delay_in_1_msec specifies delay in granularity of 1 msec. There is no
+ 262           * synchronization with the HW timer, so the actual delay may be +/- 1 msec
+ 263           * (so specifying 1 (= 1 msec) may result in almost no delay at all).
+ 264           *
+ 265           * @note May only be called when interrupt is enabled.
+ 266           */
+ 267          void delay_1 (uchar delay_in_1_msec) small
+ 268          {
+ 269   1          /* set timer value to be ticked by interrupt function */
+ 270   1          ms_1_timeout_flag = FALSE;
+ 271   1      
+ 272   1          /* Await that time has elapsed */
+ 273   1          while (delay_in_1_msec-- > 0) {
+ 274   2              while (!ms_1_timeout_flag) {
+ 275   3              }
+ 276   2              ms_1_timeout_flag = FALSE;
+ 277   2          }
+ 278   1      }
+ 279          
+ 280          
+ 281          /**
+ 282           * Start SW timer running via interrupt function. Status of timer can be read
+ 283           * via timeout function.
+ 284           *
+ 285           * time_in_10_msec specifies time in granularity of 10 msec. There is no
+ 286           * synchronization with the HW timer, so the actual time may be +/- 10 msec
+ 287           * (so specifying 1 (= 10 msec) may result in almost no time at all).
+ 288           *
+ 289           * @see timeout function.
+ 290           *
+ 291           * @example
+ 292           *                  start_timer(5);
+ 293           *                  while (!timeout()) {
+ 294           *                     ... do something
+ 295           *                  }
+ 296           */
+ 297          void start_timer (uchar time_in_10_msec) small
+ 298          {
+ 299   1          sw_timer_active_flag = FALSE;
+C51 COMPILER V9.60.0.0   TIMER                                                             11/30/2021 16:22:16 PAGE 6   
+
+ 300   1          timer_count = time_in_10_msec;
+ 301   1          sw_timer_active_flag = TRUE;
+ 302   1      }
+ 303          
+ 304          
+ 305          /**
+ 306           * To check if time specified via call to start_timer function HAS expired.
+ 307           *
+ 308           * @return  Return TRUE, if time has expired, otherwiSe FALSE.
+ 309           *
+ 310           * @see start_timer
+ 311           */
+ 312          bool timeout (void) small
+ 313          {
+ 314   1          return (!sw_timer_active_flag);
+ 315   1      }
+ 316          
+ 317          
+ 318          #if TRANSIT_LLDP
+              void time_since_boot_update (void)
+              {
+                  time_since_boot_t += 100; /* (time_since_boot/100) seconds */
+              }
+              
+              ulong time_since_boot_ticks (void)
+              {
+                  return time_since_boot_t;
+              }
+              #endif
+ 329          
+ 330          
+ 331          #if TRANSIT_FTIME
+              void ftime(struct timeb *tp)
+              {
+                  *tp = t_now;
+              }
+              #endif /* TRANSIT_FTIME */
+ 337          
+ 338          #if TRANSIT_LACP
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : To calculate the diff between two tickvalues taking wrapping
+               *               into account.
+               * Remarks     :
+               * Restrictions:
+               * See also    : timer_count
+               * Example     :
+               * ************************************************************************ */
+              ushort tdiff(ushort tnew, ushort told)
+              {
+                  if (tnew < told) /* Timer wrapped */
+                      return tnew + (0xFFFF - told);
+                  return tnew - told;
+              }
+              #endif /* TRANSIT_LACP */
+ 354          
+ 355          /****************************************************************************/
+ 356          /*                                                                          */
+ 357          /*  End of file.                                                            */
+ 358          /*                                                                          */
+ 359          /****************************************************************************/
+
+
+C51 COMPILER V9.60.0.0   TIMER                                                             11/30/2021 16:22:16 PAGE 7   
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    254    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =      4    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      6    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      5    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

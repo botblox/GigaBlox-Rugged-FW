@@ -1,0 +1,730 @@
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE H2PCS1G
+OBJECT MODULE PLACED IN ..\obj\h2pcs1g.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\switch\h2pcs1g.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\wi
+                    -nbond;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vts
+                    -s_api\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..
+                    -\src\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEN
+                    -D PRINT(..\lst\h2pcs1g.lst) TABS(2) OBJECT(..\obj\h2pcs1g.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          
+  27          #if MAC_TO_MEDIA
+  28          
+  29          #include "vtss_api_base_regs.h"
+  30          #include "h2pcs1g.h"
+  31          #include "main.h"
+  32          #include "timer.h"
+  33          #include "misc2.h"
+  34          #include "h2io.h"
+  35          #include "h2sdcfg.h"
+  36          #include "print.h"
+  37          #include "phymap.h"
+  38          #include "phydrv.h"
+  39          #include "phytsk.h"
+  40          
+  41          #if TRANSIT_LACP
+              #include "vtss_lacp.h"
+              #endif /* TRANSIT_LACP */
+  44          
+  45          /*****************************************************************************
+  46           *
+  47           *
+  48           * Defines
+  49           *
+  50           *
+  51           *
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 2   
+
+  52           ****************************************************************************/
+  53          #if defined(H2_PCS1G_DEBUG_ENABLE)
+              #include "print.h"
+              #endif /* H2_PCS1G_DEBUG_ENABLE */
+  56          
+  57          
+  58          /**
+  59           * Test whether a bitfield is set in value.
+  60           */
+  61          #define BF(__field__, __value__) (((__field__ & __value__) == __field__) ? 1 : 0)
+  62          
+  63          /*****************************************************************************
+  64           *
+  65           *
+  66           * Typedefs and enums
+  67           *
+  68           *
+  69           *
+  70           ****************************************************************************/
+  71          
+  72          /*****************************************************************************
+  73           *
+  74           *
+  75           * Prototypes for local functions
+  76           *
+  77           *
+  78           *
+  79           ****************************************************************************/
+  80          
+  81          /*****************************************************************************
+  82           *
+  83           *
+  84           * Local data
+  85           *
+  86           *
+  87           *
+  88           ****************************************************************************/
+  89          
+  90          static uchar xdata clause_37_flowcontrol[NO_OF_CHIP_PORTS];
+  91          
+  92          /* ************************************************************************ */
+  93          void h2_pcs1g_clause_37_control_set(const vtss_cport_no_t chip_port, BOOL flow_ctrl_mode)
+  94          /* ------------------------------------------------------------------------ --
+  95           * Purpose     : Set 1000Base-X Fiber Auto-negotiation (Clause 37)
+  96           * Remarks     :
+  97           * Restrictions:
+  98           * See also    :
+  99           * Example     :
+ 100           ****************************************************************************/
+ 101          {
+ 102   1          ulong tgt = VTSS_TO_DEV(chip_port);
+ 103   1          uchar mac_if = phy_map_miim_no(chip_port);
+ 104   1      
+ 105   1          clause_37_flowcontrol[chip_port] = flow_ctrl_mode;
+ 106   1      
+ 107   1          /* Set aneg capabilities */
+ 108   1      #if defined(VTSS_ARCH_LUTON26)
+                  if (MAC_IF_SGMII == mac_if) {
+                      H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt), 0x00010003, 0xffff0003);
+                  } else {
+                    H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt), 0x00a00003, 0xffff0003);
+                  }
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 3   
+
+                  delay_1(50);
+              
+              #elif defined(VTSS_ARCH_OCELOT) && !defined(SGMII_SERDES_FORCE_1G_DEBUG_ENABLE)
+ 117   1          if (mac_if == MAC_IF_SGMII) {
+ 118   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt),
+ 126   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ADV_ABILITY(1) |
+ 126   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA(1) |
+ 126   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_RESTART_ONE_SHOT(1) |
+ 126   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_ENA(1),
+ 126   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ADV_ABILITY |
+ 126   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA |
+ 126   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_RESTART_ONE_SHOT |
+ 126   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_ENA);
+ 127   2          } else {
+ 128   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt),
+ 136   2                          VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ADV_ABILITY(flow_ctrl_mode ? 0xa0 : 0x20) |
+ 136   2                          VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA(0) |
+ 136   2                          VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_RESTART_ONE_SHOT(mac_if == MAC_IF_SERD
+             -ES_1G ? 1 : 0) |
+ 136   2                          VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_ENA(mac_if == MAC_IF_SERDES_1G ? 1 : 0
+             -),
+ 136   2                          VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ADV_ABILITY |
+ 136   2                          VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA |
+ 136   2                          VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_RESTART_ONE_SHOT |
+ 136   2                          VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_ANEG_ENA);
+ 137   2          }
+ 138   1      
+ 139   1          delay_1(50);
+ 140   1      #endif
+ 141   1      }
+ 142          #ifdef SGMII_SERDES_FORCE_1G_DEBUG_ENABLE
+              /* ************************************************************************ */
+              uchar h2_pcs1g_status_get(const vtss_cport_no_t chip_port)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Get PCS1G Status ANEG disabled
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  ulong   value;
+                  uchar   link,lm = LINK_MODE_DOWN;
+                  ulong   tgt = VTSS_TO_DEV(chip_port);
+              
+                  /* 1. Read PCS link status */
+                  H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS(tgt), value);
+              
+                  /* Get PCS link status bit(4)*/
+                  link = VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_LINK_STATUS(value);
+              
+                  if (link) {
+                      lm = LINK_MODE_FDX_1000;
+                  lm |= LINK_MODE_PAUSE_MASK;
+                  } else if (!link) {
+                  lm = LINK_MODE_DOWN;
+                }
+              
+                  return lm;
+              }
+              #endif
+ 173          
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 4   
+
+ 174          /* ************************************************************************ */
+ 175          uchar h2_pcs1g_clause_37_status_get(const vtss_cport_no_t chip_port)
+ 176          /* ------------------------------------------------------------------------ --
+ 177           * Purpose     : Get 1000Base-X Fiber Auto-negotiation status (Clause 37)
+ 178           * Remarks     :
+ 179           * Restrictions:
+ 180           * See also    :
+ 181           * Example     :
+ 182           ****************************************************************************/
+ 183          {
+ 184   1          ulong   value, lp_adv_ability;
+ 185   1          uchar   link, complete, lm = LINK_MODE_DOWN;
+ 186   1          ulong   tgt = VTSS_TO_DEV(chip_port);
+ 187   1          uchar   mac_if = phy_map_miim_no(chip_port);
+ 188   1          bool    synced_status = 0, workaround_applied = 0;
+ 189   1      #if defined(VTSS_ARCH_LUTON26)
+                  uchar in_progress, ii;
+              #endif
+ 192   1      
+ 193   1      get_status_again:
+ 194   1      
+ 195   1          /* 1. Get the link state 'down' sticky bit  */
+ 196   1      #if defined(VTSS_ARCH_LUTON26)
+                  H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt), value);
+                  link = BF(VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY, value) ? 0 : 1;
+              #elif defined(VTSS_ARCH_OCELOT)
+ 200   1          H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt), value);
+ 201   1          link = !VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY(value) && !VTSS_X_DEV_PCS1G_CFG_STAT
+             -US_PCS1G_STICKY_OUT_OF_SYNC_STICKY(value);
+ 202   1      #endif
+ 203   1      #if defined(H2_PCS1G_DEBUG_ENABLE)
+                  print_str("h2_pcs1g_clause_37_status_get(), chip_port = ");
+                  print_dec(chip_port);
+                  print_str(", PCS1G_STICKY value = 0x");
+                  print_hex_dw(value);
+                  print_cr_lf();
+              #endif /* H2_PCS1G_DEBUG_ENABLE */
+ 210   1      
+ 211   1      
+ 212   1          /* Read PCS link status */
+ 213   1          H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS(tgt), value);
+ 214   1      
+ 215   1          /* Get the link state 'down' sticky bit  */
+ 216   1      #if defined(VTSS_ARCH_LUTON26)
+                  if (link) {
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt),
+                               VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY |
+                               VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY);
+                  } else { // Link-down
+                      link = BF(VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_LINK_STATUS, value) &&
+                             BF(VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_SYNC_STATUS, value);
+                  }
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 227   1          // Notice that 'LINK_DOWN_STICKY' bit is set if signal-detect or synchronization has been lost.
+ 228   1          // If the bit value is 1 when link-up state, we need to check the setting of
+ 229   1          // signal-detect(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG) in API h2.c/_setup_pcs()
+ 230   1          if (link) {
+ 231   2              /* Get PCS sync/link status */
+ 232   2              link = VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_SYNC_STATUS(value) ?
+ 233   2                     VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_LINK_STATUS(value) :
+ 234   2                     0 /* Assigned to link-down when the SYNC_STATUS is out of synchronized. */;
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 5   
+
+ 235   2          } else { // Link-down
+ 236   2              /* The link has been down. Clear sticky bit by writing value 1 */
+ 237   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt),
+ 241   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY(1) |
+ 241   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY(1),
+ 241   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY |
+ 241   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY);
+ 242   2          }
+ 243   1      #endif // defined(VTSS_ARCH_LUTON26)
+ 244   1      
+ 245   1      
+ 246   1      #if defined(VTSS_ARCH_LUTON26)
+                  synced_status = BF(VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_SYNC_STATUS, value);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 249   1          synced_status = BF(VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_SYNC_STATUS, value);
+ 250   1      #endif
+ 251   1      
+ 252   1      #if defined(VTSS_ARCH_LUTON26)
+                  for (ii = 0; ii < 3; ii++) {
+                      /* Get PCS ANEG status register */
+                      H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_STATUS(tgt), value);
+              
+                      /* Get 'Aneg in_progress'   */
+                      in_progress = BF(VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_STATUS_PR, value);
+                      if (in_progress) {
+                          break;
+                      }
+                      delay_1(5);
+                  }
+              
+                  /* Get 'Aneg complete' */
+                  complete = BF(VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_STATUS_ANEG_COMPLETE, value);
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 269   1          /* Get PCS ANEG status register */
+ 270   1          H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_STATUS(tgt), value);
+ 271   1      
+ 272   1          /* Get 'Aneg complete' */
+ 273   1          complete = VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_STATUS_ANEG_COMPLETE(value);
+ 274   1      #endif // defined(VTSS_ARCH_LUTON26)
+ 275   1      
+ 276   1          /* Workaround 1: for a Serdes issue, when aneg completes with FDX capability=0 */
+ 277   1          /* Workaround 2: for a Serdes issue, when aneg UN-completes but synced status is up */
+ 278   1          if (!workaround_applied && MAC_IF_SERDES_1G == mac_if) {
+ 279   2      #if defined(VTSS_ARCH_LUTON26)
+                      if ((complete && (((value >> 21) & 0x1) == 0)) || (synced_status && !complete)) {
+                              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+                                              0,
+                                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+                              H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+                                       VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 287   2          if ((complete && (((value >> 21) & 0x1) == 0))) {
+ 288   3                      /* Re-enable PCS */
+ 289   3                      H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+ 291   3                                      VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA(0),
+ 291   3                                      VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+ 292   3                      delay_1(50);
+ 293   3                      H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+ 295   3                                      VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA(1),
+ 295   3                                      VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+ 296   3      #endif
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 6   
+
+ 297   3      
+ 298   3                      /* Restart Aneg */
+ 299   3                      h2_pcs1g_clause_37_control_set(chip_port,clause_37_flowcontrol[chip_port]);
+ 300   3      
+ 301   3                      /* Clear sticky bit by writing value 1.
+ 302   3                         This step is important, otherwise the LINK_DOWN_STICKY bit may keep the link-down resul
+             -t.
+ 303   3                       */
+ 304   3      #if defined(VTSS_ARCH_LUTON26)
+                              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt),
+                                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY |
+                                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY,
+                                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY |
+                                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 311   3                      H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt),
+ 315   3                                      VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY(1) |
+ 315   3                                      VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY(1),
+ 315   3                                      VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY |
+ 315   3                                      VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY);
+ 316   3      #endif
+ 317   3      
+ 318   3                  workaround_applied = 1;
+ 319   3                  goto get_status_again;
+ 320   3              }
+ 321   2          } // End of Workaround
+ 322   1      
+ 323   1          /* Return partner advertisement ability */
+ 324   1          lp_adv_ability = VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_STATUS_LP_ADV_ABILITY(value);
+ 325   1          if (MAC_IF_SGMII == mac_if) {
+ 326   2              uchar sgmii_link = BF((1 << 15), lp_adv_ability);
+ 327   2      
+ 328   2              lm = ((lp_adv_ability >> 10) & 3);
+ 329   2              if (VTSS_BOOL(lp_adv_ability & (1 << 12))) {
+ 330   3                  lm |= LINK_MODE_FDX_MASK;
+ 331   3              }
+ 332   2              if (VTSS_BOOL(value & (1 << 7))) {
+ 333   3                  lm |= LINK_MODE_PAUSE_MASK;
+ 334   3              }
+ 335   2      
+ 336   2              if (link) {
+ 337   3                  link = sgmii_link;
+ 338   3              }
+ 339   2      
+ 340   2              if (!link) {
+ 341   3                  lm = LINK_MODE_DOWN;
+ 342   3              }
+ 343   2          } else if (link && complete) {
+ 344   2              lm = LINK_MODE_FDX_1000;
+ 345   2              if (VTSS_BOOL(lp_adv_ability & (1 << 7))) {
+ 346   3                  lm |= LINK_MODE_PAUSE_MASK;
+ 347   3              }
+ 348   2          }
+ 349   1      
+ 350   1      #if defined(H2_PCS1G_DEBUG_ENABLE)
+                  print_str("h2_pcs1g_clause_37_status_get(), chip_port = ");
+                  print_dec(chip_port);
+                  print_str(", lm = 0x");
+                  print_hex_b(lm);
+                  print_str(", lp_adv_ability = 0x");
+                  print_hex_dw(lp_adv_ability);
+                  print_cr_lf();
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 7   
+
+              #endif /* H2_PCS1G_DEBUG_ENABLE */
+ 359   1      
+ 360   1          return lm;
+ 361   1      }
+ 362          
+ 363          /* ************************************************************************ */
+ 364          uchar h2_pcs1g_100fx_status_get(const vtss_cport_no_t chip_port)
+ 365          /* ------------------------------------------------------------------------ --
+ 366           * Purpose     : Get the 100FX (fiber) port status (no autonegotiation)
+ 367           * Remarks     :
+ 368           * Restrictions:
+ 369           * See also    :
+ 370           * Example     :
+ 371           ****************************************************************************/
+ 372          {
+ 373   1          ulong value;
+ 374   1          ulong tgt = VTSS_TO_DEV(chip_port);
+ 375   1          uchar link_mode = LINK_MODE_DOWN;
+ 376   1      
+ 377   1          /* Get the PCS status  */
+ 378   1          H2_READ(VTSS_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS(tgt), value);
+ 379   1      
+ 380   1      #if defined(VTSS_ARCH_LUTON26)
+                  if (BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SYNC_LOST_STICKY, value) ||
+                      BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SSD_ERROR_STICKY, value) ||
+                      BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_FOUND_STICKY, value) ||
+                      BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_PCS_ERROR_STICKY, value))
+              #elif defined(VTSS_ARCH_OCELOT)
+ 386   1          if (BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SYNC_LOST_STICKY, value) ||
+ 387   1              BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SSD_ERROR_STICKY, value) ||
+ 388   1              BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_FOUND_STICKY, value) ||
+ 389   1              BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_PCS_ERROR_STICKY, value) ||
+ 390   1              BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_STATUS, value))
+ 391   1      #endif
+ 392   1          {
+ 393   2      #if defined(H2_PCS1G_DEBUG_ENABLE)
+                      if (port_link_mode_get(chip_port) != LINK_MODE_DOWN) {
+                          print_str("Calling h2_pcs1g_100fx_status_get(), chip_port=0x");
+                          print_hex_b(chip_port);
+                          print_str(", value=0x");
+                          print_hex_dw(value);
+                          print_cr_lf();
+                      }
+              #endif // H2_PCS1G_DEBUG_ENABLE
+ 402   2      
+ 403   2              /* The link has been down. Clear the sticky bit */
+ 404   2              H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS(tgt),
+ 412   2                              VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SYNC_LOST_STICKY(1) |
+ 412   2                              VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SSD_ERROR_STICKY(1) |
+ 412   2                              VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_FOUND_STICKY(1) |
+ 412   2                              VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_PCS_ERROR_STICKY(1),
+ 412   2                              VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SYNC_LOST_STICKY |
+ 412   2                              VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SSD_ERROR_STICKY |
+ 412   2                              VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_FOUND_STICKY |
+ 412   2                              VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_PCS_ERROR_STICKY);
+ 413   2              delay_1(1); // BZ18779
+ 414   2              H2_READ(VTSS_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS(tgt), value);
+ 415   2          }
+ 416   1      
+ 417   1      #if defined(VTSS_ARCH_LUTON26)
+                  if (BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SIGNAL_DETECT, value) &&
+                      !BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SYNC_LOST_STICKY, value) &&
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 8   
+
+                      !BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SSD_ERROR_STICKY, value) &&
+                      !BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_FOUND_STICKY, value) &&
+                      !BF(VTSS_F_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_PCS_ERROR_STICKY, value))
+              #elif defined(VTSS_ARCH_OCELOT)
+ 424   1          if (BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SIGNAL_DETECT, value) &&
+ 425   1              BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SYNC_STATUS, value) &&
+ 426   1              !BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SYNC_LOST_STICKY, value) &&
+ 427   1              !BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_SSD_ERROR_STICKY, value) &&
+ 428   1              !BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_FOUND_STICKY, value) &&
+ 429   1              !BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_PCS_ERROR_STICKY, value) &&
+ 430   1              !BF(VTSS_M_DEV_PCS_FX100_STATUS_PCS_FX100_STATUS_FEF_STATUS, value))
+ 431   1          {
+ 432   2              link_mode = LINK_MODE_FDX_100;
+ 433   2          }
+ 434   1      #endif
+ 435   1      
+ 436   1          return link_mode;
+ 437   1      }
+ 438          
+ 439          /* ************************************************************************ */
+ 440          void h2_pcs1g_clock_set(vtss_cport_no_t chip_port, BOOL enable)
+ 441          /* ------------------------------------------------------------------------ --
+ 442           * Purpose     : Set PCS clock
+ 443           * Remarks     :
+ 444           * Restrictions:
+ 445           * See also    :
+ 446           * Example     :
+ 447           ****************************************************************************/
+ 448          {
+ 449   1      #if defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG( VTSS_TO_DEV(chip_port)),
+                                  enable ? 0 : VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_TX_RST |
+                                  enable ? 0 : VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST |
+                                  enable ? 0 : VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST,
+                                  VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_TX_RST |
+                                  VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST |
+                                  VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST);
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 459   1          // EA = 0; // Disable interrupt while doing the clock reset.
+ 460   1          H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG( VTSS_TO_DEV(chip_port)),
+ 466   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_TX_RST(!enable) |
+ 466   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST(!enable) |
+ 466   1                          VTSS_F_DEV_PORT_MODE_CLOCK_CFG_PORT_RST(!enable),
+ 466   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PCS_TX_RST |
+ 466   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PCS_RX_RST |
+ 466   1                          VTSS_M_DEV_PORT_MODE_CLOCK_CFG_PORT_RST);
+ 467   1          // EA = 1; // Enable interrupt
+ 468   1      #endif
+ 469   1      
+ 470   1          delay_1(1); // Small delay after clock reset
+ 471   1      }
+ 472          
+ 473          /* ************************************************************************ */
+ 474          void h2_pcs1g_setup(vtss_cport_no_t chip_port, mac_if_type_t if_type)
+ 475          /* ------------------------------------------------------------------------ --
+ 476           * Purpose     : Enable psc1g serdes, sgmii or 100fx
+ 477           * Remarks     :
+ 478           * Restrictions:
+ 479           * See also    :
+ 480           * Example     :
+ 481           ****************************************************************************/
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 9   
+
+ 482          {
+ 483   1          ulong tgt = VTSS_TO_DEV(chip_port);
+ 484   1      
+ 485   1          switch(if_type) {
+ 486   2          case MAC_IF_SERDES_2_5G:
+ 487   2          case MAC_IF_SERDES_1G: {
+ 488   3      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(tgt), 0x00000001, 0x0000003b); // Restart clock
+                      H2_WRITE_MASKED(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_MODE_CFG(tgt), 0x00000011, 0x00000011); //giga & f
+             -dx
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt), 0x00000001);
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG(tgt), 0x00000000);
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_SD_CFG(tgt), 0x00000000);
+                      H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt), 0, 0x00000100);
+                      H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(tgt), 0x00000000, 0x00000001); // D
+             -isable 100FX PCS
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 498   3              /* Speed setup and enable PCS clock */
+ 499   3              H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(tgt),
+ 501   3                              VTSS_F_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED(1) /* 1000/2500 Mbps */,
+ 501   3                              VTSS_M_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED);
+ 502   3              h2_pcs1g_clock_set(chip_port, TRUE);
+ 503   3      
+ 504   3              /* Set MAC Mode Configuration */
+ 505   3              H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_MODE_CFG(tgt),
+ 509   3                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_GIGA_MODE_ENA(1) |
+ 509   3                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA(1),
+ 509   3                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_GIGA_MODE_ENA |
+ 509   3                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA); // giga & fdx
+ 510   3      
+ 511   3              /* Enable PCS */
+ 512   3              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+ 514   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA(1),
+ 514   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+ 515   3      
+ 516   3              /* Set PCS1G mode configuration: SERDES mode */
+ 517   3              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG(tgt),
+ 521   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_UNIDIR_MODE_ENA(0) |
+ 521   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_SGMII_MODE_ENA(0),
+ 521   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_UNIDIR_MODE_ENA |
+ 521   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_SGMII_MODE_ENA);
+ 522   3      
+ 523   3              /* Set PCS1G Auto-negotiation configuration: Software Resolve Abilities */
+ 524   3              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt),
+ 526   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA(0),
+ 526   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA);
+ 527   3      
+ 528   3              /* Set Configuration bit groups for 100Base-FX PCS: Disable 100FX PCS */
+ 529   3              H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(tgt),
+ 531   3                              VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA(0),
+ 531   3                              VTSS_M_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA);
+ 532   3      #endif
+ 533   3      
+ 534   3              return;
+ 535   3          }
+ 536   2      
+ 537   2          case MAC_IF_SGMII: {
+ 538   3      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(tgt), 0x00000001, 0x0000003b); // Restart clock
+                      /* --left to setup depends on link speed mode
+                      H2_WRITE_MASKED(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_MODE_CFG(tgt), 0x00000011, 0x00000011); //giga & f
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 10  
+
+             -dx
+                      */
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt), 0x00000001);
+                      H2_WRITE(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG(tgt), 0x00000001);
+                      H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt), 0x00000100, 0x00000100);
+                      H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(tgt), 0x00000000, 0x00000001); // D
+             -isable 100FX PCS
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 549   3              /* Speed setup and enable PCS clock */
+ 550   3              H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(tgt),
+ 552   3                              VTSS_F_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED(1) /* 1000/2500 Mbps */,
+ 552   3                              VTSS_M_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED);
+ 553   3              h2_pcs1g_clock_set(chip_port, TRUE);
+ 554   3      
+ 555   3              /* Enable PCS */
+ 556   3              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+ 558   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA(1),
+ 558   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+ 559   3      
+ 560   3              /* Set PCS1G mode configuration: SGMII mode */
+ 561   3              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG(tgt),
+ 565   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_UNIDIR_MODE_ENA(0) |
+ 565   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_SGMII_MODE_ENA(1),
+ 565   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_UNIDIR_MODE_ENA |
+ 565   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_MODE_CFG_SGMII_MODE_ENA);
+ 566   3      
+ 567   3              /* Set PCS1G Auto-negotiation configuration: Software Resolve Abilities */
+ 568   3              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt),
+ 570   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA(1),
+ 570   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA);
+ 571   3      
+ 572   3              /* Set Configuration bit groups for 100Base-FX PCS: Disable 100FX PCS */
+ 573   3              H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(tgt),
+ 575   3                              VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA(0),
+ 575   3                              VTSS_M_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA);
+ 576   3      #endif
+ 577   3      
+ 578   3              return;
+ 579   3          }
+ 580   2      
+ 581   2          case MAC_IF_100FX: {
+ 582   3      #if defined(VTSS_ARCH_LUTON26)
+                      H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(tgt), 0x00000002, 0x0000003b);
+                      //H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_MODE_CFG(tgt), 0x00000000, 0x00000010);
+                      H2_WRITE_MASKED(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_MODE_CFG(tgt), 0x00000001, 0x00000011);
+                      H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt), 0, 0x00000100);
+                      H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(tgt), 0x00000001, 0x07000001);
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 590   3              /* Speed setup and enable PCS clock */
+ 591   3              H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_CLOCK_CFG(tgt),
+ 593   3                              VTSS_F_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED(2) /* 100 Mbps */,
+ 593   3                              VTSS_M_DEV_PORT_MODE_CLOCK_CFG_LINK_SPEED);
+ 594   3              h2_pcs1g_clock_set(chip_port, TRUE);
+ 595   3      
+ 596   3              /* Set MAC Mode Configuration */
+ 597   3              H2_WRITE_MASKED(VTSS_DEV_MAC_CFG_STATUS_MAC_MODE_CFG(tgt),
+ 601   3                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_GIGA_MODE_ENA(0) |
+ 601   3                              VTSS_F_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA(1),
+ 601   3                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_GIGA_MODE_ENA |
+ 601   3                              VTSS_M_DEV_MAC_CFG_STATUS_MAC_MODE_CFG_FDX_ENA);  // 10/100 & fdx
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 11  
+
+ 602   3      
+ 603   3              /* Set PCS1G Auto-negotiation configuration: Software Resolve Abilities */
+ 604   3              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG(tgt),
+ 606   3                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA(0),
+ 606   3                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_ANEG_CFG_SW_RESOLVE_ENA);
+ 607   3      
+ 608   3              /* Set Configuration bit groups for 100Base-FX PCS: Enable 100FX PCS */
+ 609   3              H2_WRITE_MASKED(VTSS_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG(tgt),
+ 611   3                              VTSS_F_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA(1),
+ 611   3                              VTSS_M_DEV_PCS_FX100_CONFIGURATION_PCS_FX100_CFG_PCS_ENA);
+ 612   3      #endif
+ 613   3      
+ 614   3              return;
+ 615   3          }
+ 616   2      
+ 617   2          default:
+ 618   2      #if defined(H2_PCS1G_DEBUG_ENABLE)
+                      print_str("%% Error: Wrong parameter when calling h2_pcs1g_setup(), chip_port=0x");
+                      print_hex_b(chip_port);
+                      print_str(", mode=0x");
+                      print_hex_b(if_type);
+                      print_cr_lf();
+              #endif /* H2_PCS1G_DEBUG_ENABLE */
+ 625   2              break;
+ 626   2          }
+ 627   1      }
+ 628          
+ 629          /* Get the PCS1G link status */
+ 630          uchar h2_pcs1g_2_5g_link_status_get(vtss_cport_no_t chip_port)
+ 631          {
+ 632   1          ulong tgt = VTSS_TO_DEV(chip_port);
+ 633   1          ulong reg_val;
+ 634   1          uchar link_mode = LINK_MODE_DOWN;
+ 635   1      
+ 636   1      #if defined(VTSS_ARCH_LUTON26)
+                  // Luton26, TODO
+              #elif defined(VTSS_ARCH_OCELOT)
+ 639   1          /* Read PCS1G sticky register */
+ 640   1          H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt), reg_val);
+ 641   1          if (VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY(reg_val)) {
+ 642   2              /* Clear sticky bit then re-enable PCS */
+ 643   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt),
+ 645   2                              VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY(1),
+ 645   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_OUT_OF_SYNC_STICKY);
+ 646   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+ 648   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA(0),
+ 648   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+ 649   2              delay_1(5);
+ 650   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_CFG(tgt),
+ 652   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA(1),
+ 652   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_CFG_PCS_ENA);
+ 653   2          }
+ 654   1      
+ 655   1          H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt), reg_val);
+ 656   1          if (VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY(reg_val)) {
+ 657   2              /* The link has been down. Clear sticky bit by writing value 1 */
+ 658   2              H2_WRITE_MASKED(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY(tgt),
+ 660   2                              VTSS_F_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY(1),
+ 660   2                              VTSS_M_DEV_PCS1G_CFG_STATUS_PCS1G_STICKY_LINK_DOWN_STICKY);
+ 661   2          }
+ 662   1      
+ 663   1          /* Read PCS1G link status register */
+C51 COMPILER V9.60.0.0   H2PCS1G                                                           11/30/2021 16:22:20 PAGE 12  
+
+ 664   1          H2_READ(VTSS_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS(tgt), reg_val);
+ 665   1          if (VTSS_X_DEV_PCS1G_CFG_STATUS_PCS1G_LINK_STATUS_LINK_STATUS(reg_val)) {
+ 666   2              link_mode = LINK_MODE_FDX_2500;
+ 667   2          }
+ 668   1      #endif
+ 669   1      
+ 670   1          return link_mode;
+ 671   1      }
+ 672          
+ 673          #endif // MAC_TO_MEDIA
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2072    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     11      50
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----       2
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

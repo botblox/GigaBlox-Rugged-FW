@@ -1,0 +1,409 @@
+C51 COMPILER V9.60.0.0   H2FLOWC                                                           11/30/2021 16:22:18 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE H2FLOWC
+OBJECT MODULE PLACED IN ..\obj\h2flowc.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\switch\h2flowc.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\wi
+                    -nbond;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vts
+                    -s_api\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..
+                    -\src\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEN
+                    -D PRINT(..\lst\h2flowc.lst) TABS(2) OBJECT(..\obj\h2flowc.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #include "phymap.h"
+  27          #include "phytsk.h"
+  28          #include "vtss_api_base_regs.h"
+  29          #include "h2io.h"
+  30          #include "main.h"
+  31          #include "hwport.h"
+  32          #include "misc2.h"
+  33          
+  34          /*****************************************************************************
+  35           *
+  36           *
+  37           * Public data
+  38           *
+  39           *
+  40           *
+  41           ****************************************************************************/
+  42          
+  43          
+  44          
+  45          /*****************************************************************************
+  46           *
+  47           *
+  48           * Defines
+  49           *
+  50           *
+  51           *
+C51 COMPILER V9.60.0.0   H2FLOWC                                                           11/30/2021 16:22:18 PAGE 2   
+
+  52           ****************************************************************************/
+  53          
+  54          
+  55          
+  56          /*****************************************************************************
+  57           *
+  58           *
+  59           * Typedefs and enums
+  60           *
+  61           *
+  62           *
+  63           ****************************************************************************/
+  64          
+  65          
+  66          /*****************************************************************************
+  67           *
+  68           *
+  69           * Prototypes for local functions
+  70           *
+  71           *
+  72           *
+  73           ****************************************************************************/
+  74          #if defined(VTSS_ARCH_OCELOT)
+  75          #define MULTIPLIER_BIT 256
+  76          static u16 wm_enc(u16 value)
+  77          {
+  78   1          if (value >= MULTIPLIER_BIT) {
+  79   2              return MULTIPLIER_BIT + value / 16;
+  80   2          }
+  81   1          return value;
+  82   1      }
+  83          
+  84          /*****************************************************************************
+  85           *
+  86           *
+  87           * Local data
+  88           *
+  89           *
+  90           *
+  91           ****************************************************************************/
+  92          /* Buffer constants */
+  93          #define FERRET_BUFFER_MEMORY    229380
+  94          #define FERRET_BUFFER_REFERENCE 1911
+  95          #define FERRET_BUFFER_CELL_SZ   60
+  96          #define VTSS_PRIOS              8
+  97          
+  98          #if 0 //BZ#21585 - Ferret watermark setting is in h2.c/_ferret_buf_conf_set()
+              /* Priority-based flow control configuration
+               * It based on the main trunk Serval-1 vtss_serval_port.c/srvl_port_pfc() implementation
+               */
+              static void _ferret_port_pfc(vtss_cport_no_t chip_port, uchar link_mode)
+              {
+                  u32 buf_q_rsrv_i = 3000;
+                  u32 buf_q_rsrv_i_def = 3000; // Default
+                  u32 q, pfc_mask = 0x0, pfc = 0;
+                  u32 speed = (link_mode & LINK_MODE_SPEED_MASK);
+                  u32 spd = (speed == LINK_MODE_SPEED_10 ? 3 :
+                             speed == LINK_MODE_SPEED_100 ? 2 :
+                             speed == LINK_MODE_SPEED_1000 ? 1 : 0);
+              
+                  // pfc_mask = 0xff; // Enable 8 queues
+                  // pfc = 1;         // Enable priority-based flow control
+C51 COMPILER V9.60.0.0   H2FLOWC                                                           11/30/2021 16:22:18 PAGE 3   
+
+              
+                  for (q = 0; q < VTSS_PRIOS; q++) {
+                      H2_WRITE(VTSS_QSYS_RES_CTRL_RES_CFG(chip_port * VTSS_PRIOS + q + 0),
+                               wm_enc((pfc ? buf_q_rsrv_i : buf_q_rsrv_i_def) / FERRET_BUFFER_CELL_SZ));
+                  }
+              
+                  /* Rx enable/disable */
+                  H2_WRITE_MASKED(VTSS_ANA_PFC_PFC_CFG(chip_port), 
+                                  VTSS_F_ANA_PFC_PFC_CFG_RX_PFC_ENA(pfc_mask) |
+                                  VTSS_F_ANA_PFC_PFC_CFG_FC_LINK_SPEED(spd),
+                                  VTSS_M_ANA_PFC_PFC_CFG_RX_PFC_ENA |
+                                  VTSS_M_ANA_PFC_PFC_CFG_FC_LINK_SPEED);
+                  
+                  /* Forward 802.1Qbb pause frames to analyzer */
+                  H2_WRITE_MASKED(VTSS_DEV_PORT_MODE_PORT_MISC(VTSS_TO_DEV(chip_port)), 
+                                  VTSS_BOOL(pfc_mask) ? VTSS_F_DEV_PORT_MODE_PORT_MISC_FWD_CTRL_ENA(1) : 0,
+                                  VTSS_M_DEV_PORT_MODE_PORT_MISC_FWD_CTRL_ENA);
+               
+                  /*  PFC Tx enable is done after the core is enabled */
+              }
+              #endif // BZ#21585
+ 135          
+ 136          /* Port flow control configuration
+ 137           * It based on the main trunk Serval-1 vtss_serval_port.c/srvl_port_fc_setup() implementation
+ 138           */
+ 139          static void _ferret_port_fc_setup(vtss_cport_no_t chip_port, uchar link_mode, uchar fc_enabled)
+ 140          {
+ 141   1          BOOL            pfc = 0, fc_gen = 0, fc_obey = 0;
+ 142   1          vtss_iport_no_t iport_idx;
+ 143   1          u32             rsrv_raw, rsrv_total = 0, atop_wm, tgt = VTSS_TO_DEV(chip_port);
+ 144   1          u32             pause_start = 0x7ff;
+ 145   1          u32             pause_stop  = 0xfff;
+ 146   1          u32             rsrv_raw_fc_jumbo = 40000;
+ 147   1          u32             rsrv_raw_no_fc_jumbo = 12000;
+ 148   1          u32             rsrv_raw_fc_no_jumbo = 13662; /* 9 x 1518 */
+ 149   1          u32             speed = (link_mode & LINK_MODE_SPEED_MASK);
+ 150   1          u32             spd = (speed == LINK_MODE_SPEED_10 ? 3 :
+ 151   1                                 speed == LINK_MODE_SPEED_100 ? 2 :
+ 152   1                                 speed == LINK_MODE_SPEED_1000 ? 1 : 0);
+ 153   1          mac_addr_t mac_addr;
+ 154   1      
+ 155   1          /* Notice: 802.3X FC and 802.1Qbb PFC cannot both be enabled */
+ 156   1          //pfc = 1; // Enable priority-based flow control
+ 157   1          fc_gen = fc_enabled, fc_obey = fc_enabled;
+ 158   1      
+ 159   1          /* Configure 802.1Qbb PFC */
+ 160   1      #if 0 //BZ#21585 - Ferret watermark setting is in h2.c/_ferret_buf_conf_set()
+                  _ferret_port_pfc(chip_port, link_mode);
+              #endif // BZ#21585
+ 163   1      
+ 164   1          /* Configure Standard Flowcontrol */
+ 165   1      #if (MAX_FRAME_SIZE > VTSS_MAX_FRAME_LENGTH_STANDARD)
+ 166   1          pause_start = 228;     /* 9 x 1518 / 60 */
+ 167   1          if (fc_gen) {
+ 168   2              /* FC and jumbo enabled*/
+ 169   2              pause_stop  = 177;     /* 7 x 1518 / 60 */
+ 170   2              rsrv_raw    = rsrv_raw_fc_jumbo;   
+ 171   2          } else {
+ 172   2              /* FC disabled, jumbo enabled */
+ 173   2              rsrv_raw = rsrv_raw_no_fc_jumbo;
+ 174   2          }
+ 175   1      #else
+C51 COMPILER V9.60.0.0   H2FLOWC                                                           11/30/2021 16:22:18 PAGE 4   
+
+                  pause_start = 152;    /* 6 x 1518 / 60 */
+                  if (fc_gen) {
+                  /* FC enabled, jumbo disabled */
+                      pause_stop  = 101;    /* 4 x 1518 / 60 */
+                      rsrv_raw    = rsrv_raw_fc_no_jumbo;  
+                  } else {
+                      rsrv_raw    = 0;
+                  }
+              #endif // (MAX_FRAME_SIZE > VTSS_MAX_FRAME_LENGTH_STANDARD)
+ 185   1      
+ 186   1          if (pfc) {
+ 187   2              rsrv_raw = 80000; // Each port can use this as max before tail dropping starts
+ 188   2          }
+ 189   1      
+ 190   1          /* Set Pause WM hysteresis*/
+ 191   1          H2_WRITE(VTSS_SYS_PAUSE_CFG_PAUSE_CFG(chip_port),
+ 194   1                   VTSS_F_SYS_PAUSE_CFG_PAUSE_CFG_PAUSE_START(pause_start) |
+ 194   1                   VTSS_F_SYS_PAUSE_CFG_PAUSE_CFG_PAUSE_STOP(pause_stop) |
+ 194   1                   VTSS_F_SYS_PAUSE_CFG_PAUSE_CFG_PAUSE_ENA(fc_gen));
+ 195   1          
+ 196   1          /* Set SMAC of Pause frame */
+ 197   1          get_mac_addr(chip_port, mac_addr);
+ 198   1          H2_WRITE(VTSS_DEV_MAC_CFG_STATUS_MAC_FC_MAC_HIGH_CFG(tgt),(mac_addr[0]<<16) | (mac_addr[1]<<8) | mac_a
+             -ddr[2]);
+ 199   1          H2_WRITE(VTSS_DEV_MAC_CFG_STATUS_MAC_FC_MAC_LOW_CFG(tgt), (mac_addr[3]<<16) | (mac_addr[4]<<8) | mac_a
+             -ddr[5]);
+ 200   1      
+ 201   1          /* Enable/disable FC incl. pause value and zero pause */
+ 202   1      
+ 203   1          H2_WRITE(VTSS_SYS_PAUSE_CFG_MAC_FC_CFG(chip_port),
+ 209   1                   VTSS_F_SYS_PAUSE_CFG_MAC_FC_CFG_FC_LINK_SPEED(spd) |
+ 209   1                   VTSS_F_SYS_PAUSE_CFG_MAC_FC_CFG_FC_LATENCY_CFG(7) |
+ 209   1                   VTSS_F_SYS_PAUSE_CFG_MAC_FC_CFG_ZERO_PAUSE_ENA(1) |
+ 209   1                   VTSS_F_SYS_PAUSE_CFG_MAC_FC_CFG_TX_FC_ENA(fc_gen) |
+ 209   1                   VTSS_F_SYS_PAUSE_CFG_MAC_FC_CFG_RX_FC_ENA(fc_obey) |
+ 209   1                   VTSS_F_SYS_PAUSE_CFG_MAC_FC_CFG_PAUSE_VAL_CFG(pfc ? 0xff : 0xffff));
+ 210   1      
+ 211   1      
+ 212   1          H2_WRITE_MASKED(VTSS_QSYS_SYSTEM_SWITCH_PORT_MODE(chip_port),
+ 214   1                          VTSS_F_QSYS_SYSTEM_SWITCH_PORT_MODE_INGRESS_DROP_MODE(!fc_gen),
+ 214   1                          VTSS_M_QSYS_SYSTEM_SWITCH_PORT_MODE_INGRESS_DROP_MODE);
+ 215   1      
+ 216   1        
+ 217   1          /* Calculate the total reserved space for all ports */
+ 218   1          for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+ 219   2              uchar lm = port_link_mode_get(iport2cport(iport_idx));
+ 220   2              fc_gen = (lm & LINK_MODE_PAUSE_MASK) ? 1 : 0;
+ 221   2      
+ 222   2      #if (MAX_FRAME_SIZE > VTSS_MAX_FRAME_LENGTH_STANDARD)
+ 223   2              if (fc_gen) {
+ 224   3                  rsrv_total += rsrv_raw_fc_jumbo;
+ 225   3              } else {
+ 226   3                  rsrv_total += rsrv_raw_no_fc_jumbo;
+ 227   3              }
+ 228   2      #else
+                      if (fc_gen) {
+                          rsrv_total += rsrv_raw_fc_no_jumbo;
+                      }
+              #endif // (MAX_FRAME_SIZE > VTSS_MAX_FRAME_LENGTH_STANDARD)
+ 233   2          }
+ 234   1          atop_wm = (FERRET_BUFFER_MEMORY - rsrv_total)/FERRET_BUFFER_CELL_SZ;
+ 235   1      
+C51 COMPILER V9.60.0.0   H2FLOWC                                                           11/30/2021 16:22:18 PAGE 5   
+
+ 236   1          /*  When 'port ATOP' and 'common ATOP_TOT' are exceeded, tail dropping is activated on port */
+ 237   1              /* HOL blocking issue on Ferret
+ 238   1           * According to Morten's suggestion below.
+ 239   1           * I think both should be set to their max value, when the port isn¡¦t running
+ 240   1           * with flow control enabled. Or ¡V simply always set atop_tot_cfg to the max
+ 241   1           * value. The ATOP watermark is only there to protect the memory from extreme
+ 242   1           * use by ports that are enabled for flow control, but don¡¦t obey the pause
+ 243   1           * frames. 
+ 244   1           * My suggestion; keep the source code as is, but set atop_tot_cfg to max
+ 245   1           * unconditionally.
+ 246   1          H2_WRITE(VTSS_SYS_PAUSE_CFG_ATOP_TOT_CFG, pfc ? 0 : wm_enc(atop_wm)); */
+ 247   1          H2_WRITE(VTSS_SYS_PAUSE_CFG_ATOP_TOT_CFG, pfc ? 0 : 0x1FF);
+ 248   1          H2_WRITE(VTSS_SYS_PAUSE_CFG_ATOP(chip_port), wm_enc(rsrv_raw / FERRET_BUFFER_CELL_SZ));
+ 249   1      }
+ 250          #endif // VTSS_ARCH_OCELOT
+ 251          
+ 252          /* ************************************************************************ */
+ 253          void h2_setup_flow_control(vtss_cport_no_t chip_port, uchar link_mode)
+ 254          /* ------------------------------------------------------------------------ --
+ 255           * Purpose     : Setup flow control according to configuration and link
+ 256           *               partner's advertisement.
+ 257           * Remarks     : Please see main.h for a description of link_mode.
+ 258           * Restrictions:
+ 259           * See also    :
+ 260           * Example     :
+ 261           ****************************************************************************/
+ 262          {
+ 263   1      #if defined(VTSS_ARCH_LUTON26)
+                  vtss_iport_no_t iport_idx;
+                  mac_addr_t mac_addr;
+                  ulong pause_start, pause_stop, rsrv_raw, rsrv_total, atop_wm;
+                  ulong tgt;
+                  uchar lm;
+              #endif // VTSS_ARCH_LUTON26
+ 270   1      
+ 271   1      #if (!VTSS_ATOM12_A) && (!VTSS_ATOM12_B)
+ 272   1          /* check pause flag */
+ 273   1          uchar mask = LINK_MODE_PAUSE_MASK;
+ 274   1      #else
+                  /* check BOTH pause flag and full duplex flag */
+                  /* Note: in some chipset revisions, half duplex backpressure do not work
+                     on SERDES port. */
+                  uchar mask = LINK_MODE_FDX_AND_PAUSE_MASK;
+              #endif // (!VTSS_ATOM12_A) && (!VTSS_ATOM12_B)
+ 280   1      
+ 281   1          BOOL local;
+ 282   1          uchar remote, fc;
+ 283   1      
+ 284   1          local  = phy_flowcontrol_get(chip_port); /* Local has always advertised support of pause frames */
+ 285   1          remote = ((link_mode & mask) == mask);
+ 286   1          fc     = (local && remote);
+ 287   1      
+ 288   1      #if defined(VTSS_ARCH_LUTON26)
+                  rsrv_total  = 0;
+                  pause_start = 0x7ff;
+                  pause_stop  = 0x7ff;
+              
+              #if defined(JUMBO)
+                  /* FC disabled and jumbo */
+                  rsrv_raw  = 250;      /* 12000 / 48 */
+              
+                  if (fc) {
+C51 COMPILER V9.60.0.0   H2FLOWC                                                           11/30/2021 16:22:18 PAGE 6   
+
+                      /* FC enabled and jumbo */
+                      pause_start = 221;    /* 7 x 1518 / 48 */
+                      pause_stop  = 158;    /* 5 x 1518 / 48 */
+                      rsrv_raw    = 284;    /* 9 x 1518 / 48 */
+                  }
+              #else
+                  /* FC disabled and no jumbo */
+                  rsrv_raw = 0;
+              
+                  if (fc) {
+                      /* FC enabled and no jumbo */
+                      pause_start = 190;    /* 6 x 1518 / 48 */
+                      pause_stop  = 127;    /* 4 x 1518 / 48 */
+                      rsrv_raw    = 253;    /* 8 x 1518 / 48 */
+                  }
+              #endif
+              
+                  /* Calculate the total reserved space for all ports */
+                  for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+                      lm     = port_link_mode_get(iport2cport(iport_idx));
+                      remote = ((lm & mask) == mask);
+              #if defined(JUMBO)
+                      if (local && remote) {
+                          rsrv_total +=  13662; /* 9*1518 */
+                      } else {
+                          rsrv_total +=  12000;
+                      }
+              #else
+                      if (local && remote) {
+                          rsrv_total +=  12144; /* 8*1518 */
+                      }
+              #endif
+                  }
+              
+                  /* Set Pause WM hysteresis*/
+                  H2_WRITE(VTSS_SYS_PAUSE_CFG_PAUSE_CFG(chip_port),
+                           VTSS_F_SYS_PAUSE_CFG_PAUSE_CFG_PAUSE_START(pause_start) |
+                           VTSS_F_SYS_PAUSE_CFG_PAUSE_CFG_PAUSE_STOP(pause_stop) |
+                           (fc ? VTSS_F_SYS_PAUSE_CFG_PAUSE_CFG_PAUSE_ENA : 0));
+              
+                  atop_wm = (512000 - rsrv_total)/48;
+                  if (atop_wm >= 1024UL) {
+                      atop_wm = 1024UL + atop_wm/16;
+                  }
+              
+                  /*  When 'port ATOP' and 'common ATOP_TOT' are exceeded, tail dropping is activated on a port */
+                  H2_WRITE(VTSS_SYS_PAUSE_CFG_ATOP_TOT_CFG, atop_wm);
+                  H2_WRITE(VTSS_SYS_PAUSE_CFG_ATOP(chip_port), rsrv_raw);
+              
+              
+                  /* Set SMAC of Pause frame */
+                  get_mac_addr(chip_port, mac_addr);
+                  tgt = VTSS_TO_DEV(chip_port); 
+                  H2_WRITE(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_FC_MAC_HIGH_CFG(tgt),(mac_addr[0]<<16) | (mac_addr[1]<<8) | m
+             -ac_addr[2]);
+                  H2_WRITE(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_FC_MAC_LOW_CFG(tgt), (mac_addr[3]<<16) | (mac_addr[4]<<8) | m
+             -ac_addr[5]);
+              
+                  /* Enable/disable FC incl. pause value and zero pause */
+                  H2_WRITE(VTSS_DEV_CMN_MAC_CFG_STATUS_MAC_FC_CFG(tgt),
+                           VTSS_F_DEV_MAC_CFG_STATUS_MAC_FC_CFG_ZERO_PAUSE_ENA |
+                           (fc ? VTSS_F_DEV_MAC_CFG_STATUS_MAC_FC_CFG_TX_FC_ENA : 0) |
+C51 COMPILER V9.60.0.0   H2FLOWC                                                           11/30/2021 16:22:18 PAGE 7   
+
+                           (fc ? VTSS_F_DEV_MAC_CFG_STATUS_MAC_FC_CFG_RX_FC_ENA  : 0) |
+                           VTSS_F_DEV_MAC_CFG_STATUS_MAC_FC_CFG_PAUSE_VAL_CFG(0xff) |
+                           VTSS_F_DEV_MAC_CFG_STATUS_MAC_FC_CFG_FC_LATENCY_CFG(63));/* changed from 7 to 63 : disable fl
+             -ow control latency */
+              
+              #elif defined(VTSS_ARCH_OCELOT)
+ 363   1          _ferret_port_fc_setup(chip_port, link_mode, fc);
+ 364   1      #endif // VTSS_ARCH_OCELOT
+ 365   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1057    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----      61
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

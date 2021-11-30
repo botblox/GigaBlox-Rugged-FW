@@ -1,0 +1,522 @@
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     1
+
+
+MACRO ASSEMBLER A51 V8.2.7.0
+OBJECT MODULE PLACED IN ..\obj\STARTUP_OCELOT.obj
+ASSEMBLER INVOKED BY: C:\Keil_v5\C51\BIN\A51.EXE ..\src\main\STARTUP_OCELOT.A51 INCDIR(..\src\config) SET(LARGE) DEBUG P
+                      RINT(..\lst\STARTUP_OCELOT.lst) OBJECT(..\obj\STARTUP_OCELOT.obj) EP
+
+LOC  OBJ            LINE     SOURCE
+
+                       1     $nomod51 
+                       2     ;$include (hwconf.inc)
+                +1     3     ;*
+                +1     4     ;*
+                +1     5     ;* Copyright (c) 2017 Microsemi Corporation "Microsemi".
+                +1     6     ;*
+                +1     7     ;* Permission is hereby granted, free of charge, to any person obtaining a copy
+                +1     8     ;* of this software and associated documentation files (the "Software"), to deal
+                +1     9     ;* in the Software without restriction, including without limitation the rights
+                +1    10     ;* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+                +1    11     ;* copies of the Software, and to permit persons to whom the Software is
+                +1    12     ;* furnished to do so, subject to the following conditions:
+                +1    13     ;*
+                +1    14     ;* The above copyright notice and this permission notice shall be included in all
+                +1    15     ;* copies or substantial portions of the Software.
+                +1    16     ;*
+                +1    17     ;* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+                +1    18     ;* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+                +1    19     ;* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+                +1    20     ;* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+                +1    21     ;* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+                +1    22     ;* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                +1    23     ;* SOFTWARE.
+                +1    24     ;*
+                +1    25     ;*
+                +1    26     ;*
+                +1    27     
+                +1    28     ;* ************************************************************************ **
+                +1    29     ;*
+                +1    30     ;*
+                +1    31     ;* Internal 8051 registers
+                +1    32     ;*
+                +1    33     ;* Below is the list of Special Function Registers (SFR).
+                +1    34     ;*
+                +1    35     ;*
+                +1    36     ;* ************************************************************************ */
+                +1    37     
+  0080          +1    38                     GPR             DATA    080H
+  00B0          +1    39                     PAGE_SEL        DATA    0B0H
+  00C0          +1    40                     EPAGE_SEL       DATA    0C0H
+  00F2          +1    41                     MMAP            DATA    0F2H
+  00F4          +1    42                     RA_CTRL         DATA    0F4H
+  00F6          +1    43                     RA_AD0_RD       DATA    0F6H
+  00F7          +1    44                     RA_AD0_WR       DATA    0F7H
+  00F9          +1    45                     RA_AD1          DATA    0F9H
+  00FA          +1    46                     RA_AD2          DATA    0FAH
+  00FB          +1    47                     RA_AD3          DATA    0FBH
+  00FC          +1    48                     RA_DA0          DATA    0FCH
+  00FD          +1    49                     RA_DA1          DATA    0FDH
+  00FE          +1    50                     RA_DA2          DATA    0FEH
+  00FF          +1    51                     RA_DA3          DATA    0FFH
+                +1    52     
+                +1    53                     ; Paging bits
+  00B0          +1    54                     PG_OP_0         BIT     0B0H
+  00B1          +1    55                     PG_OP_1         BIT     0B1H
+  00B2          +1    56                     PG_OP_2         BIT     0B2H
+  00B3          +1    57                     PG_OP_3         BIT     0B3H
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     2
+
+  00B4          +1    58                     PG_IFP_0        BIT     0B4H
+  00B5          +1    59                     PG_IFP_1        BIT     0B5H
+  00B6          +1    60                     PG_IFP_2        BIT     0B6H
+  00B7          +1    61                     PG_IFP_3        BIT     0B7H
+                +1    62     
+                +1    63                     ; General Purpose Regiser bits
+  0080          +1    64                     GPR_0           BIT     080H
+  0081          +1    65                     GPR_1           BIT     081H
+  0082          +1    66                     GPR_2           BIT     082H
+  0083          +1    67                     GPR_3           BIT     083H
+  0084          +1    68                     GPR_4           BIT     084H
+  0085          +1    69                     GPR_5           BIT     085H
+  0086          +1    70                     GPR_6           BIT     086H
+  0087          +1    71                     GPR_7           BIT     087H
+                +1    72     
+                +1    73     ;* ************************************************************************ **
+                +1    74     ;*
+                +1    75     ;*
+                +1    76     ;* Select chip interface
+                +1    77     ;*
+                +1    78     ;* Define which chip interface to use, either 8-bit parallel interface, SI
+                +1    79     ;* interface or SFR interface.
+                +1    80     ;*
+                +1    81     ;* Set USE_PI to 1 to use 8-bit interface, otherwise set USE_PI to 0.
+                +1    82     ;* Set USE_SI to 1 to use SI interface, otherwise set USE_SI to 0.
+                +1    83     ;* Set USE_SFR to 1 to use SFR interface, otherwise set USE_SFR to 0.
+                +1    84     ;* Set BOOT_VIA_SPI to 1 to boot from SPI Flash, otherwise set BOOT_VIA_SPI to 0.
+                +1    85     ;*
+                +1    86     ;*
+                +1    87     ;* ************************************************************************ */
+                +1    88     
+                +1    89                     ; !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                +1    90                     ; ! Please, keep c-file hwconf.h updated accordingly !
+                +1    91                     ; !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                +1    92                     $set  (USE_PI  = 0)
+                +1    93                     $set  (USE_SI  = 0)
+                +1    94                     $set  (USE_SFR = 1)
+                +1    95                     $set  (BOOT_VIA_SPI = 1)
+                +1    96     
+                +1    97     ;* ************************************************************************ **
+                +1    98     ;*
+                +1    99     ;*
+                +1   100     ;* SPI configuration
+                +1   101     ;*
+                +1   102     ;*
+                +1   103     ;*
+                +1   104     ;* ************************************************************************ */
+                +1   105     
+                +1   106                     ; SPI pins
+  0094          +1   107                     SS              BIT     094H    ; P1^4
+  0095          +1   108                     MOSI            BIT     095H    ; P1^5
+  0096          +1   109                     MISO            BIT     096H    ; P1^6
+  0097          +1   110                     SCK             BIT     097H    ; P1^7
+                +1   111     
+                +1   112                     ; SPI registers present if the controller is e.g. a SST89V564
+  00D5          +1   113                     SPCR            DATA    0D5H
+  00AA          +1   114                     SPSR            DATA    0AAH
+  0086          +1   115                     SPDR            DATA    086H
+                +1   116     
+                +1   117     SPI_DELAY_1     MACRO
+                +1   118                     ; no delay needed
+                +1   119                     ENDM
+                +1   120     
+                +1   121     ;* ************************************************************************ **
+                +1   122     ;*
+                +1   123     ;*
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     3
+
+                +1   124     ;* Select MOVX/MOVC for reading from flash pages
+                +1   125     ;*
+                +1   126     ;*
+                +1   127     ;*
+                +1   128     ;* ************************************************************************ */
+                +1   129     
+                +1   130                     ;*
+                +1   131                     ;* 0; movx
+                +1   132                     ;* 1: movc
+                +1   133                     ;*
+                +1   134                     $set  (FAR_ACCESS_METHOD = 1)
+                +1   135     
+                +1   136     
+                +1   137     ;* ************************************************************************ **
+                +1   138     ;*
+                +1   139     ;*
+                +1   140     ;*      XRAM definitions
+                +1   141     ;*
+                +1   142     ;*      Define absolute start address (XDATASTART) and length (XDATALEN) of
+                +1   143     ;*      extern RAM (on-chip).
+                +1   144     ;*
+                +1   145     ;*      Used in startup.a51.
+                +1   146     ;*
+                +1   147     ;*
+                +1   148     ;* ************************************************************************ */
+                +1   149     
+  E000          +1   150                     XDATASTART      EQU     0E000H
+                +1   151     
+  2000          +1   152                     XDATALEN        EQU     02000H
+                +1   153     
+                +1   154     
+                +1   155     
+                +1   156     
+                +1   157     
+                +1   158     
+                +1   159     
+                +1   160     
+                +1   161     
+                +1   162     
+                +1   163     
+                +1   164     
+                +1   165     
+                +1   166     
+                +1   167     ;* ************************************************************************ **
+                +1   168     ;*
+                +1   169     ;*
+                +1   170     ;* Macro for initializing control pins for external memory
+                +1   171     ;*
+                +1   172     ;*
+                +1   173     ;*
+                +1   174     ;* ************************************************************************ */
+                +1   175     
+                +1   176                     ; This macro presets outputs for control of external memory.
+                +1   177                     ; Used in startup.a51
+                +1   178     STARTUP_XMEM    MACRO
+                +1   179                     ENDM
+                +1   180     
+                +1   181     ;* ************************************************************************ **
+                +1   182     ;*
+                +1   183     ;*
+                +1   184     ;* xxx
+                +1   185     ;*
+                +1   186     ;*
+                +1   187     ;*
+                +1   188     ;* ************************************************************************ */
+                +1   189     
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     4
+
+                +1   190     
+                +1   191     
+                     192     
+                     193     ;------------------------------------------------------------------------------
+                     194     ;  This file is part of the C51 Compiler package
+                     195     ;  Copyright (c) 1988-2002 Keil Elektronik GmbH and Keil Software, Inc.
+                     196     ;------------------------------------------------------------------------------
+                     197     ;  STARTUP.A51:  This code is executed after processor reset.
+                     198     ;
+                     199     ;  To translate this file use A51 with the following invocation:
+                     200     ;
+                     201     ;     A51 STARTUP.A51
+                     202     ;
+                     203     ;  To link the modified STARTUP.OBJ file to your application use the following
+                     204     ;  BL51 invocation:
+                     205     ;
+                     206     ;     BL51 <your object file list>, STARTUP.OBJ <controls>
+                     207     ;
+                     208     ;------------------------------------------------------------------------------
+                     209     ;
+                     210     ;  User-defined Power-On Initialization of Memory
+                     211     ;
+                     212     ;  With the following EQU statements the initialization of memory
+                     213     ;  at processor reset can be defined:
+                     214     ;
+                     215     ;               ; the absolute start-address of IDATA memory is always 0
+  00FF               216     IDATALEN        EQU    0FFH     ; the length of IDATA memory in bytes.
+                     217     ;
+                     218     ; See hwconf.inc XDATASTART      EQU     0000H   ; the absolute start-address of XDATA memo
+                             ry
+                     219     ; See hwconf.inc XDATALEN        EQU     8000H   ; the length of XDATA memory in bytes.
+                     220     ;
+  0000               221     PDATASTART      EQU     0H      ; the absolute start-address of PDATA memory
+  0000               222     PDATALEN        EQU     0H      ; the length of PDATA memory in bytes.
+                     223     ;
+                     224     ;  Notes:  The IDATA space overlaps physically the DATA and BIT areas of the
+                     225     ;          8051 CPU. At minimum the memory space occupied from the C51 
+                     226     ;          run-time routines must be set to zero.
+                     227     ;------------------------------------------------------------------------------
+                     228     ;
+                     229     ;  Reentrant Stack Initilization
+                     230     ;
+                     231     ;  The following EQU statements define the stack pointer for reentrant
+                     232     ;  functions and initialized it:
+                     233     ;
+                     234     ;  Stack Space for reentrant functions in the SMALL model.
+  0000               235     IBPSTACK        EQU     0       ; set to 1 if small reentrant is used.
+  0100               236     IBPSTACKTOP     EQU     0FFH+1  ; set top of stack to highest location+1.
+                     237     ;
+                     238     ;  Stack Space for reentrant functions in the LARGE model.      
+  0000               239     XBPSTACK        EQU     0       ; set to 1 if large reentrant is used.
+  0000               240     XBPSTACKTOP     EQU     0FFFFH+1; set top of stack to highest location+1.
+                     241     ;
+                     242     ;  Stack Space for reentrant functions in the COMPACT model.    
+  0000               243     PBPSTACK        EQU     0       ; set to 1 if compact reentrant is used.
+  0000               244     PBPSTACKTOP     EQU     0FFFFH+1; set top of stack to highest location+1.
+                     245     ;
+                     246     ;------------------------------------------------------------------------------
+                     247     ;
+                     248     ;  Page Definition for Using the Compact Model with 64 KByte xdata RAM
+                     249     ;
+                     250     ;  The following EQU statements define the xdata page used for pdata
+                     251     ;  variables. The EQU PPAGE must conform with the PPAGE control used
+                     252     ;  in the linker invocation.
+                     253     ;
+  0000               254     PPAGEENABLE     EQU     0       ; set to 1 if pdata object are used.
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     5
+
+                     255     ;
+  0000               256     PPAGE           EQU     0       ; define PPAGE number.
+                     257     ;
+  00A0               258     PPAGE_SFR       DATA    0A0H    ; SFR that supplies uppermost address byte
+                     259     ;               (most 8051 variants use P2 as uppermost address byte)
+                     260     ;
+                     261     ;------------------------------------------------------------------------------
+                     262     
+                     263     ; Standard SFR Symbols 
+  00E0               264     ACC     DATA    0E0H
+  00F0               265     B       DATA    0F0H
+  0081               266     SP      DATA    81H
+  0082               267     DPL     DATA    82H
+  0083               268     DPH     DATA    83H
+  008E               269     AUXR    DATA    8EH
+                     270     
+                     271                     NAME    ?C_STARTUP
+                     272     
+                     273     
+                     274     ?C_C51STARTUP   SEGMENT   CODE
+                     275     ?STACK          SEGMENT   IDATA
+                     276     
+----                 277                     RSEG    ?STACK
+0000                 278                     DS      1
+                     279     
+                     280                     EXTRN CODE (?C_START)
+                     281                     PUBLIC  ?C_STARTUP
+                     282     
+----                 283                     CSEG    AT      0
+0000 020000   F      284     ?C_STARTUP:     LJMP    STARTUP1
+                     285     
+----                 286                     RSEG    ?C_C51STARTUP
+0000                 287     STARTUP1:
+                     288                     ; Mapping before memory and stack inialization
+0000 758100   F      289                     MOV     SP,#?STACK-1
+0003 120000   F      290                     call    hw_init
+                     291                             
+                     292     IF IDATALEN <> 0
+0006 78FE            293                     MOV     R0,#IDATALEN - 1
+0008 E4              294                     CLR     A
+0009 F6              295     IDATALOOP:      MOV     @R0,A
+000A D8FD            296                     DJNZ    R0,IDATALOOP
+                     297     ENDIF
+                     298     
+                     299     IF XDATALEN <> 0
+                     300                     STARTUP_XMEM
+                     301     
+000C 90E000          302                     MOV     DPTR,#XDATASTART
+000F 7F00            303                     MOV     R7,#LOW (XDATALEN)
+                     304       IF (LOW (XDATALEN)) <> 0
+                                             MOV     R6,#(HIGH (XDATALEN)) +1
+                               ELSE
+0011 7E20            307                     MOV     R6,#HIGH (XDATALEN)
+                     308       ENDIF
+0013 E4              309                     CLR     A
+0014 F0              310     XDATALOOP:      MOVX    @DPTR,A
+0015 A3              311                     INC     DPTR
+0016 DFFC            312                     DJNZ    R7,XDATALOOP
+0018 DEFA            313                     DJNZ    R6,XDATALOOP
+                     314     ENDIF
+                     315     
+                     316     
+                     317     IF PPAGEENABLE <> 0
+                                             MOV     PPAGE_SFR,#PPAGE
+                             ENDIF
+                     320     
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     6
+
+                     321     IF PDATALEN <> 0
+                                             MOV     R0,#LOW (PDATASTART)
+                                             MOV     R7,#LOW (PDATALEN)
+                                             CLR     A
+                             PDATALOOP:      MOVX    @R0,A
+                                             INC     R0
+                                             DJNZ    R7,PDATALOOP
+                             ENDIF
+                     329     
+                     330     IF IBPSTACK <> 0
+                             EXTRN DATA (?C_IBP)
+                             
+                                             MOV     ?C_IBP,#LOW IBPSTACKTOP
+                             ENDIF
+                     335     
+                     336     IF XBPSTACK <> 0
+                             EXTRN DATA (?C_XBP)
+                             
+                                             MOV     ?C_XBP,#HIGH XBPSTACKTOP
+                                             MOV     ?C_XBP+1,#LOW XBPSTACKTOP
+                             ENDIF
+                     342     
+                     343     IF PBPSTACK <> 0
+                             EXTRN DATA (?C_PBP)
+                                             MOV     ?C_PBP,#LOW PBPSTACKTOP
+                             ENDIF
+                     347     
+001A 758100   F      348                     MOV     SP,#?STACK-1
+                     349     
+                     350     
+                     351     ; This code is required if you use L51_BANK.A51 with Banking Mode 4
+                     352     ; EXTRN CODE (?B_SWITCH0)
+                     353     ;               CALL    ?B_SWITCH0      ; init bank mechanism to code bank 0
+001D 020000   F      354                     LJMP    ?C_START
+                     355     
+0020                 356     hw_init:
+                     357       ; Speed up the SI interface by writing to IPU_CFG:SPI_MST_CFG.
+0020 75FF00          358       MOV RA_DA3, #0
+0023 75FE00          359       MOV RA_DA2, #0
+0026 75FD07          360       MOV RA_DA1, #007H
+0029 75FCEA          361       MOV RA_DA0, #0EAH
+002C 75FB70          362       MOV RA_AD3, #070H
+002F 75FA00          363       MOV RA_AD2, #0
+0032 75F900          364       MOV RA_AD1, #0
+0035 75F73C          365       MOV RA_AD0_WR, #03CH ; this write start the AHB write! for Ocelot
+                     366     
+                     367     $if  (BOOT_VIA_SPI = 1)
+                     368       ; Configure registers for loading the internal memory from FLASH. ICPU_CFG:MEMACC
+                     369       ; It is defined in src\config\hwconf.inc
+0038 75FFDF          370       MOV RA_DA3,#HIGH (XDATASTART - 1)
+003B 75FEFF          371       MOV RA_DA2,#LOW  (XDATASTART - 1)
+003E 75FD00          372       MOV RA_DA1, #0
+0041 75FC00          373       MOV RA_DA0, #0
+                     374       ; MOV RA_AD3, #070H
+                     375       ; MOV RA_AD2, #0
+                     376       ; MOV RA_AD1, #0
+0044 75F764          377       MOV RA_AD0_WR, #064H ; this write start the AHB write!ocelot
+                     378       
+                     379       ; Start the actual load, the 8051 will be gated while the load is going on,
+                     380       ; so we can just continue as if nothing had happend (8051 will be released
+                     381       ; once the onchip memory contains the progam). ICPU_CFG:MEMACC_CTRL
+0047 75FF00          382       MOV RA_DA3, #0
+004A 75FE00          383       MOV RA_DA2, #0
+                     384       ; MOV RA_DA1, #0
+004D 75FC01          385       MOV RA_DA0, #001H
+                     386       ; MOV RA_AD3, #070H
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     7
+
+                     387       ; MOV RA_AD2, #0
+                     388       ; MOV RA_AD1, #0
+0050 75F760          389       MOV RA_AD0_WR, #060H ; this write start the AHB write!ocelot
+                     390     $endif 
+                     391     
+                     392       ; Errata, clear SFR register 0x8E prior to mapping internal memory.
+0053 758E00          393       MOV 8EH, #000H
+                     394       
+                     395       ; Enable mapping of onchip memory, note that we use SFR reg - not the CSR
+                     396       ; counterpart, this means that if the 8051 is reset (without resetting the
+                     397       ; the AHB system), then we will again load from external FLASH!
+0056 75F2AF          398       MOV MMAP, #0AFH ; map all accesses to onchip memory (until 8051 reset)
+                     399     
+                     400     ;  MOV RA_DA0, #0AFH
+                     401     ;  MOV RA_AD0_WR, #05CH; // this write start the AHB write!
+                     402     
+                     403       ;MOV RA_AD0_RD, #024H; // this write start the AHB read!
+                     404       
+                     405       ;MOV RA_DA0, #08FH; // clear bits 4:5 (of 0xAF)for ferret and jaguar2
+                     406     
+                     407       ;MOV RA_AD0_WR, #024H; // write back register!
+                     408     
+0059 22              409       ret
+                     410     
+                     411                     END
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     8
+
+SYMBOL TABLE LISTING
+------ ----- -------
+
+
+N A M E             T Y P E  V A L U E   ATTRIBUTES
+
+?C_C51STARTUP. . .  C SEG    005AH       REL=UNIT
+?C_START . . . . .  C ADDR   -----       EXT
+?C_STARTUP . . . .  C ADDR   0000H   A   
+?STACK . . . . . .  I SEG    0001H       REL=UNIT
+ACC. . . . . . . .  D ADDR   00E0H   A   
+AUXR . . . . . . .  D ADDR   008EH   A   
+B. . . . . . . . .  D ADDR   00F0H   A   
+DPH. . . . . . . .  D ADDR   0083H   A   
+DPL. . . . . . . .  D ADDR   0082H   A   
+EPAGE_SEL. . . . .  D ADDR   00C0H   A   
+GPR. . . . . . . .  D ADDR   0080H   A   
+GPR_0. . . . . . .  B ADDR   0080H.0 A   
+GPR_1. . . . . . .  B ADDR   0080H.1 A   
+GPR_2. . . . . . .  B ADDR   0080H.2 A   
+GPR_3. . . . . . .  B ADDR   0080H.3 A   
+GPR_4. . . . . . .  B ADDR   0080H.4 A   
+GPR_5. . . . . . .  B ADDR   0080H.5 A   
+GPR_6. . . . . . .  B ADDR   0080H.6 A   
+GPR_7. . . . . . .  B ADDR   0080H.7 A   
+HW_INIT. . . . . .  C ADDR   0020H   R   SEG=?C_C51STARTUP
+IBPSTACK . . . . .  N NUMB   0000H   A   
+IBPSTACKTOP. . . .  N NUMB   0100H   A   
+IDATALEN . . . . .  N NUMB   00FFH   A   
+IDATALOOP. . . . .  C ADDR   0009H   R   SEG=?C_C51STARTUP
+MISO . . . . . . .  B ADDR   0090H.6 A   
+MMAP . . . . . . .  D ADDR   00F2H   A   
+MOSI . . . . . . .  B ADDR   0090H.5 A   
+PAGE_SEL . . . . .  D ADDR   00B0H   A   
+PBPSTACK . . . . .  N NUMB   0000H   A   
+PBPSTACKTOP. . . .  N NUMB   0000H   A   
+PDATALEN . . . . .  N NUMB   0000H   A   
+PDATASTART . . . .  N NUMB   0000H   A   
+PG_IFP_0 . . . . .  B ADDR   00B0H.4 A   
+PG_IFP_1 . . . . .  B ADDR   00B0H.5 A   
+PG_IFP_2 . . . . .  B ADDR   00B0H.6 A   
+PG_IFP_3 . . . . .  B ADDR   00B0H.7 A   
+PG_OP_0. . . . . .  B ADDR   00B0H.0 A   
+PG_OP_1. . . . . .  B ADDR   00B0H.1 A   
+PG_OP_2. . . . . .  B ADDR   00B0H.2 A   
+PG_OP_3. . . . . .  B ADDR   00B0H.3 A   
+PPAGE. . . . . . .  N NUMB   0000H   A   
+PPAGEENABLE. . . .  N NUMB   0000H   A   
+PPAGE_SFR. . . . .  D ADDR   00A0H   A   
+RA_AD0_RD. . . . .  D ADDR   00F6H   A   
+RA_AD0_WR. . . . .  D ADDR   00F7H   A   
+RA_AD1 . . . . . .  D ADDR   00F9H   A   
+RA_AD2 . . . . . .  D ADDR   00FAH   A   
+RA_AD3 . . . . . .  D ADDR   00FBH   A   
+RA_CTRL. . . . . .  D ADDR   00F4H   A   
+RA_DA0 . . . . . .  D ADDR   00FCH   A   
+RA_DA1 . . . . . .  D ADDR   00FDH   A   
+RA_DA2 . . . . . .  D ADDR   00FEH   A   
+RA_DA3 . . . . . .  D ADDR   00FFH   A   
+SCK. . . . . . . .  B ADDR   0090H.7 A   
+SP . . . . . . . .  D ADDR   0081H   A   
+SPCR . . . . . . .  D ADDR   00D5H   A   
+SPDR . . . . . . .  D ADDR   0086H   A   
+SPSR . . . . . . .  D ADDR   00AAH   A   
+SS . . . . . . . .  B ADDR   0090H.4 A   
+STARTUP1 . . . . .  C ADDR   0000H   R   SEG=?C_C51STARTUP
+A51 MACRO ASSEMBLER  STARTUP_OCELOT                                                       11/30/2021 16:22:17 PAGE     9
+
+XBPSTACK . . . . .  N NUMB   0000H   A   
+XBPSTACKTOP. . . .  N NUMB   0000H   A   
+XDATALEN . . . . .  N NUMB   2000H   A   
+XDATALOOP. . . . .  C ADDR   0014H   R   SEG=?C_C51STARTUP
+XDATASTART . . . .  N NUMB   E000H   A   
+
+
+REGISTER BANK(S) USED: 0 
+
+
+ASSEMBLY COMPLETE.  0 WARNING(S), 0 ERROR(S)

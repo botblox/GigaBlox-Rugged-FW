@@ -1,0 +1,803 @@
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN ..\obj\main.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\main\main.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbond
+                    -;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_api
+                    -\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src\
+                    -eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PRI
+                    -NT(..\lst\main.lst) TABS(2) OBJECT(..\obj\main.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #include "sysutil.h"
+  27          #include "event.h"
+  28          
+  29          #include "interrupt.h"
+  30          #include "hwport.h"
+  31          #include "spiflash.h"
+  32          #include "timer.h"
+  33          #include "uartdrv.h"
+  34          #include "phytsk.h"
+  35          #include "print.h"
+  36          #include "clihnd.h"
+  37          #include "phydrv.h"
+  38          #include "phymap.h"
+  39          #include "phy_family.h"
+  40          #include "phy_base.h"
+  41          #include "h2.h"
+  42          #include "h2txrx.h"
+  43          #include "h2gpios.h"
+  44          
+  45          #include "misc2.h"
+  46          #include "i2c_h.h"
+  47          #include "taskdef.h"
+  48          #include "h2sdcfg.h"
+  49          
+  50          
+  51          #if TRANSIT_FAN_CONTROL
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 2   
+
+              #include "fan_api.h"
+              #endif
+  54          
+  55          #if TRANSIT_SNMP
+              #include "snmp.h"
+              #include "traps.h"
+              #endif /* TRANSIT_SNMP */
+  59          
+  60          #if TRANSIT_LLDP
+              #include "lldp.h"
+              #endif /* TRANSIT_LLDP */
+  63          
+  64          #if TRANSIT_LACP
+              #include "vtss_lacp.h"
+              #endif /* TRANSIT_LACP */
+  67          
+  68          #if TRANSIT_EEE
+              #include "eee_api.h"
+              #include "eee_base_api.h"
+              #endif
+  72          
+  73          #if TRANSIT_LAG
+              #include "h2aggr.h"
+              #endif /* TRANSIT_LAG */
+  76          
+  77          #if TRANSIT_LOOPDETECT
+              #include "loopdet.h"
+              #endif
+  80          
+  81          #if TRANSIT_POE
+              #include "poetsk.h"
+              #endif /* TRANSIT_POE */
+  84          
+  85          #if TRANSIT_POE_LLDP
+              #include "poe_os.h"
+              #endif
+  88          
+  89          #if FRONT_LED_PRESENT
+  90          #include "ledtsk.h"
+  91          #endif
+  92          
+  93          #include "main.h"
+  94          #include "misc2.h"  
+  95          #include "h2io.h"   
+  96          
+  97          #if TRANSIT_E2ETC
+              #include "h2e2etc.h"
+              #if TRANSIT_TCAM_IS2
+              #include "h2tcam.h"
+              #endif
+              #endif
+ 103          
+ 104          #if TRANSIT_MAILBOX_COMM
+              #include "h2mailc.h"
+              #endif // TRANSIT_MAILBOX_COMM
+ 107          
+ 108          /*
+ 109           * Debug enable/disable on local file
+ 110           */
+ 111          #define MAIN_DEBUG_ENABLE
+ 112          #if defined(MAIN_DEBUG_ENABLE)
+ 113          #include "version.h"
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 3   
+
+ 114          #endif
+ 115          
+ 116          /*****************************************************************************
+ 117           *
+ 118           *
+ 119           * Public data
+ 120           *
+ 121           *
+ 122           ****************************************************************************/
+ 123          
+ 124          /*****************************************************************************
+ 125           *
+ 126           *
+ 127           * Defines
+ 128           *
+ 129           *
+ 130           ****************************************************************************/
+ 131          
+ 132          
+ 133          /*****************************************************************************
+ 134           *
+ 135           *
+ 136           * Typedefs and enums
+ 137           *
+ 138           *
+ 139           ****************************************************************************/
+ 140          
+ 141          
+ 142          /*****************************************************************************
+ 143           *
+ 144           *
+ 145           * Local data
+ 146           *
+ 147           *
+ 148           ****************************************************************************/
+ 149          static ulong up_time = 0; // the unit is second
+ 150          
+ 151          
+ 152          /*****************************************************************************
+ 153           *
+ 154           *
+ 155           * Local Functions
+ 156           *
+ 157           *
+ 158           ****************************************************************************/
+ 159          
+ 160          
+ 161          #if !defined(BRINGUP)
+ 162          static void error_check (void)
+ 163          {
+ 164   1      #if H2_ID_CHECK
+                  if (!h2_chip_family_support()) {
+                      sysutil_assert_event_set(SYS_ASSERT_EVENT_CHIP_FAMILY);
+                  }
+              #endif // H2_ID_CHECK
+ 169   1      
+ 170   1          if (phy_check_all()) {
+ 171   2              sysutil_assert_event_set(SYS_ASSERT_EVENT_PHY);
+ 172   2          }
+ 173   1      
+ 174   1      }
+ 175          #endif /* !BRINGUP */
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 4   
+
+ 176          
+ 177          #if defined(HW_TEST_UART)
+              void sleep_ms(u32 ms)
+              {
+                /* Set the timer value (the default timer ticks every 100 us) */
+                H2_WRITE(VTSS_ICPU_CFG_TIMERS_TIMER_VALUE(0), ms * 10);
+              
+                /* Enable timer 0 for one-shot */
+                H2_WRITE(VTSS_ICPU_CFG_TIMERS_TIMER_CTRL(0),
+                       VTSS_F_ICPU_CFG_TIMERS_TIMER_CTRL_ONE_SHOT_ENA(1) |
+                       VTSS_F_ICPU_CFG_TIMERS_TIMER_CTRL_TIMER_ENA(1));
+              
+                /* Wait for timer 0 to reach 0 */
+                while (H2_READ(VTSS_ICPU_CFG_TIMERS_TIMER_VALUE(0)));
+              }
+              #endif /* HW_TEST_UART */
+ 192          
+ 193          #if 0  //uncall functions
+              char getchar() {
+                /* Wait for Data Ready */
+                while (!VTSS_X_UART_UART_LSR_DR(H2_READ(VTSS_UART_UART_LSR(VTSS_TO_UART))));
+              
+                /* Read Rx data */
+                return H2_READ(VTSS_UART_UART_RBR_THR(VTSS_TO_UART));
+              }
+              #endif
+ 202          
+ 203          #if !defined(NO_DEBUG_IF) && defined(HW_TEST_TIMTER)
+              void debug_test_timer(void)
+              {
+                  //timer
+                  if (ms_10_timeout_flag) {
+                      ms_10_timeout_flag = 0;
+                      println_str("ms_10_timeout_flag*");
+                  }
+                  if (ms_100_timeout_flag) {
+                      ms_100_timeout_flag = 0;
+                      println_str("ms_100_timeout_flag**");
+                  }
+                  if (sec_1_timeout_flag) {
+                      sec_1_timeout_flag = 0;
+                      println_str("sec_1_timeout_flag***");
+                  }
+              }
+              #endif /* HW_TEST_TIMTER */
+ 221          
+ 222          #if !defined(NO_DEBUG_IF) && defined(HW_TEST_UART)
+              void debug_test_uart(void)
+              {
+                  static char toggle_cnt = 0;
+              
+                  println_str("*********************************");
+                  print_str("VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0):0x");
+                  print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0)));
+                  print_cr_lf();
+                  print_str("VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1):0x");
+                  print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1)));
+                  print_cr_lf();
+              
+                  //THR
+                  print_str("VTSS_UART_UART_RBR_THR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_RBR_THR(VTSS_TO_UART)));
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 5   
+
+                  print_spaces(4);
+                  print_ch(H2_READ(VTSS_UART_UART_RBR_THR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //IER
+                  print_str("VTSS_UART_UART_IER(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_IER(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //FCR
+                  print_str("VTSS_UART_UART_IIR_FCR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_IIR_FCR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //LCR
+                  print_str("VTSS_UART_UART_LCR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_LCR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //MCR
+                  print_str("VTSS_UART_UART_MCR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_MCR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //LSR
+                  print_str("VTSS_UART_UART_LSR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_LSR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //MSR
+                  print_str("VTSS_UART_UART_MSR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_MSR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //SCR
+                  print_str("VTSS_UART_UART_SCR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_SCR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //RESERVED1
+                  print_str("VTSS_UART_UART_RESERVED1(VTSS_TO_UART,0):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_RESERVED1(VTSS_TO_UART,0)));
+                  print_cr_lf();
+              
+                  //USR
+                  print_str("VTSS_UART_UART_USR(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_USR(VTSS_TO_UART)));
+                  print_cr_lf();
+              
+                  //VTSS_UART_UART_RESERVED2
+                  print_str("VTSS_UART_UART_RESERVED2(VTSS_TO_UART, 0):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_RESERVED2(VTSS_TO_UART, 0)));
+                  print_cr_lf();
+              
+              
+                  //VTSS_UART_UART_RESERVED2
+                  print_str("VTSS_UART_UART_HTX(VTSS_TO_UART):0x");
+                  print_hex_dw(H2_READ(VTSS_UART_UART_HTX(VTSS_TO_UART)));
+                  print_cr_lf();
+                  print_cr_lf();
+                  print_cr_lf();
+              
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 6   
+
+                  sleep_ms(5000);
+                  if (++toggle_cnt % 2) {
+                      H2_WRITE_MASKED(VTSS_UART_UART_MCR(VTSS_TO_UART), VTSS_F_UART_UART_MCR_LB(1), VTSS_M_UART_UART_MCR
+             -_LB);
+                  }   else {
+                      H2_WRITE_MASKED(VTSS_UART_UART_MCR(VTSS_TO_UART), 0, VTSS_M_UART_UART_MCR_LB);
+                  }
+              }
+              #endif /* HW_TEST_UART */
+ 308          
+ 309          static void handle_timeout_event_10ms(void)
+ 310          {
+ 311   1          if (!ms_10_timeout_flag) {
+ 312   2              return;
+ 313   2          }
+ 314   1      
+ 315   1      #if TRANSIT_MAILBOX_COMM
+                  TASK(TASK_ID_MAILBOX_COMM, h2mailc_tsk());
+              #endif // TRANSIT_MAILBOX_COMM
+ 318   1      
+ 319   1          TASK(TASK_ID_PHY_TIMER, phy_timer_10());
+ 320   1          TASK(TASK_ID_PHY, phy_tsk());
+ 321   1          
+ 322   1      #if TRANSIT_LACP
+                          TASK(TASK_ID_LACP_TIMER, lacp_timer_check());
+              #endif /* TRANSIT_LACP */
+ 325   1      
+ 326   1      #if (WATCHDOG_PRESENT && WATCHDOG_ENABLE)
+                  TASK(TASK_ID_WATCHDOG, kick_watchdog());
+              #endif
+ 329   1      
+ 330   1          // Clear event flag
+ 331   1          ms_10_timeout_flag = 0;
+ 332   1      }
+ 333          
+ 334          static void handle_timeout_event_100ms(void)
+ 335          {
+ 336   1          if (!ms_100_timeout_flag) {
+ 337   2              return;
+ 338   2          }
+ 339   1      
+ 340   1      #if FRONT_LED_PRESENT
+ 341   1          led_tsk();
+ 342   1      #endif
+ 343   1      
+ 344   1      #if TRANSIT_LOOPDETECT
+                   TASK(TASK_ID_LOOPBACK_CHECK, ldettsk());
+              #endif
+ 347   1      
+ 348   1      #if TRANSIT_EEE
+                  TASK(TASK_ID_EEE, eee_mgmt());
+              #endif
+ 351   1      
+ 352   1          // Clear event flag
+ 353   1          ms_100_timeout_flag = 0;
+ 354   1      }
+ 355          
+ 356          static void handle_timeout_event_1sec(void)
+ 357          {
+ 358   1          if (!sec_1_timeout_flag) {
+ 359   2              return;
+ 360   2          }
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 7   
+
+ 361   1      
+ 362   1      #if FRONT_LED_PRESENT
+ 363   1          led_1s_timer();
+ 364   1      #endif
+ 365   1      
+ 366   1      #if TRANSIT_THERMAL
+                  phy_handle_temperature_protect();
+                  phy_temperature_timer_1sec ();
+              #endif
+ 370   1      
+ 371   1      #if TRANSIT_LLDP
+                  TASK(TASK_ID_LLDP_TIMER, lldp_1sec_timer_tick());
+                  TASK(TASK_ID_TIMER_SINCE_BOOT, time_since_boot_update());
+              #endif /* TRANSIT_LLDP */
+ 375   1      
+ 376   1      #if !defined(BRINGUP)
+ 377   1          /*
+ 378   1           * Check H2 and PHYs
+ 379   1           */
+ 380   1          TASK(TASK_ID_ERROR_CHECK, error_check());
+ 381   1      #endif /* !BRINGUP */
+ 382   1      
+ 383   1      #if TRANSIT_EEE
+                  callback_delayed_eee_lpi();
+              #endif /* TRANSIT_EEE */
+ 386   1      
+ 387   1      #if TRANSIT_FAN_CONTROL
+                  TASK(TASK_ID_FAN_CONTROL, fan_control());
+              #endif
+ 390   1      
+ 391   1      #if TRANSIT_LOOPDETECT
+                   ldet_aging_1s();
+              #endif
+ 394   1      
+ 395   1          /* toggle any alive LED */
+ 396   1          ALIVE_LED_TOGGLE;
+ 397   1      
+ 398   1          // Clear event flag
+ 399   1          sec_1_timeout_flag = 0;
+ 400   1          up_time++;
+ 401   1      }
+ 402          
+ 403          /*****************************************************************************
+ 404           *
+ 405           *
+ 406           * Public Functions
+ 407           *
+ 408           *
+ 409           ****************************************************************************/
+ 410          #if 0 // Uncalled function
+              ulong get_system_uptime()
+              {
+                  return up_time; // the unit is second
+              }    
+              #endif // Uncalled function
+ 416          
+ 417          
+ 418          #if defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F4P)
+              static void _ferret_serdes1g_4_patch(void)
+              {
+                  /* Bugzilla#20911 - Hardware pins S4_RXN#3 and S4_RXP#3 are swapped on SERDES1G_4 interface.
+                   *
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 8   
+
+                   *  On current (rev.1) boards there is no external pull on Ferret's MII_MDC output
+                   * (GPIO_14), hence when used as a GPIO (e.g. before using it as MII_MDC / alternate mode 01)
+                   * it will read as high due to the internal pullup resistor on the pin.
+                   *
+                   * On future (e.g. rev.2) boards I will add a 1K pulldown (R92 in the attached schematics)
+                   * to GPIO_14, so that it will read as low (until the pin is configured as MII_MDC output,
+                   * of course).
+                   *
+                   * Notice the patch only be executed when SERDES1G_4 is in used and GPIO_14 = high.
+                   */
+                  ulong addr = 1 << 4;
+                  ulong dat;
+              
+                  // The same as h2_sd1g_read()
+                  h2_write(VTSS_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG,
+                           VTSS_F_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG_SERDES1G_ADDR(addr) |
+                           VTSS_F_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG_SERDES1G_RD_ONE_SHOT(1));
+              
+                  /* Wait until write operation is completed  */
+                  do {
+                      dat = h2_read(VTSS_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG);
+                  } while(VTSS_X_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG_SERDES1G_RD_ONE_SHOT(dat));
+              
+                  h2_write_masked(VTSS_HSIO_SERDES1G_DIG_CFG_SERDES1G_MISC_CFG,
+                                  VTSS_F_HSIO_SERDES1G_DIG_CFG_SERDES1G_MISC_CFG_RX_DATA_INV_ENA(1),
+                                  VTSS_M_HSIO_SERDES1G_DIG_CFG_SERDES1G_MISC_CFG_RX_DATA_INV_ENA);
+              
+                  // The same as h2_sd1g_write()
+                  h2_write(VTSS_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG,
+                           VTSS_F_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG_SERDES1G_ADDR(addr) |
+                           VTSS_F_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG_SERDES1G_WR_ONE_SHOT(1));
+              
+                  /* Wait until write operation is completed  */
+                  do {
+                      dat = h2_read(VTSS_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG);
+                  } while(VTSS_X_HSIO_MCB_SERDES1G_CFG_MCB_SERDES1G_ADDR_CFG_SERDES1G_WR_ONE_SHOT(dat));
+              }
+              #endif // FERRET_F11 || FERRET_F10P || FERRET_F4P
+ 461          
+ 462          /**
+ 463           * Control initialization sequence and control round-robin loop.
+ 464           */
+ 465          #if defined(FERRET_MAIN_ENABLE)
+              extern void ferret_main(void);
+              #endif // FERRET_MAIN_ENABLE
+ 468          
+ 469          void main (void)
+ 470          {
+ 471   1          char hw_ver;
+ 472   1      
+ 473   1          /*
+ 474   1           * Important !!!
+ 475   1           *
+ 476   1           * Don't access the switch register via APIs H2_READ()/H2_WRITE()/H2_WRITE_MASKED()
+ 477   1           * before the interrupt mechanism is ready
+ 478   1           */
+ 479   1      
+ 480   1      #if defined(VTSS_ARCH_OCELOT) && !defined(BRINGUP) && defined(FERRET_MAIN_ENABLE)
+                  ferret_main();
+              #endif
+ 483   1      
+ 484   1          /* Determine hardware version */
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 9   
+
+ 485   1          // Add something here to determin rev.A/rev. B board BZ#20911
+ 486   1          hw_ver = get_hw_version();
+ 487   1      
+ 488   1      #if defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F4P)
+                  // Before the alternate function enabling,
+                  // read GPIO_14 value to decide if SERDES1G_4 S/W patch need to execute or not
+                  if (hw_ver == '1') {
+                      _ferret_serdes1g_4_patch();
+                  }
+              #endif // FERRET_F11 || FERRET_F10P || FERRET_F4P
+ 495   1      
+ 496   1      #if defined(FERRET_F11) || defined(FERRET_F10P)
+                  /* We need to enable alternate functions before uart_init()
+                   * (needs to refer to hardware schematic)
+                   * Chose GPIO Overlaid Funciton 1: 0,1,4,6,7,14,15,16
+                   * GPIO_0  - SG0_CLK
+                   * GPIO_1  - SG0_DO
+                   * GPIO_4  - IRQ0_IN
+                   * GPIO_6  - UART_RXD
+                   * GPIO_7  - UART_TXD
+                   * GPIO_14 - MIIM1_MDC
+                   * GPIO_15 - MIIM1_MDIO
+                   * GPIO_16 - TWI_SDA
+                   */
+                  h2_write(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0), 0x01C0D3);
+              
+              #elif defined(FERRET_F5) || defined(FERRET_F4P)
+ 512   1          // Without MIIM1 GPIO_14/GPIO_15 (for external PHY chip)
+ 513   1          // 31     24 23     16 15      8 7       0
+ 514   1          // --------- --------- --------- ---------
+ 515   1          //                0001.0000.0000.1101.0011
+ 516   1          h2_write(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0), 0x0100D3);
+ 517   1      #endif
+ 518   1      
+ 519   1          /* Set up timer 0 for system tick */
+ 520   1          timer_1_init();
+ 521   1      
+ 522   1          /* Initialize drivers */
+ 523   1      #if !defined(NO_DEBUG_IF)
+ 524   1          uart_init();
+ 525   1      #endif
+ 526   1      
+ 527   1          /* Setup interrupts */
+ 528   1          ext_interrupt_init();
+ 529   1      
+ 530   1          /*
+ 531   1           * Enable global interrupt
+ 532   1           *
+ 533   1           * The interrupt mechanism is ready now.
+ 534   1           * Use APIs H2_READ()/H2_WRITE()/H2_WRITE_MASKED() to access switch register.
+ 535   1           */
+ 536   1          EA = 1;
+ 537   1      
+ 538   1          /* Wait 20 msec before accessing chip and PHYs */
+ 539   1          delay_1(20);
+ 540   1      
+ 541   1      #if defined(MAIN_DEBUG_ENABLE)
+ 542   1          print_cr_lf();
+ 543   1          print_cr_lf();
+ 544   1          sysutil_show_chip_id();
+ 545   1          sysutil_show_sw_ver();
+ 546   1          sysutil_show_compile_date();
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 10  
+
+ 547   1          sysutil_show_hw_ver();
+ 548   1      #endif /* MAIN_DEBUG_ENABLE */
+ 549   1      
+ 550   1      #if defined(BRINGUP)
+                  while(1);
+              
+              #else
+ 554   1      
+ 555   1          /* Initialize memory and enable the switch core */
+ 556   1          h2_post_reset();
+ 557   1      
+ 558   1          /* GPIO/SGPIO initialization */
+ 559   1          gpio_init();
+ 560   1      
+ 561   1          /* Read configuration data into RAM */
+ 562   1      #if TRANSIT_UNMANAGED_SWUP
+                  flash_init();
+              #endif
+ 565   1      
+ 566   1          flash_load_config();
+ 567   1      
+ 568   1          /*
+ 569   1           * Do some health check of chip
+ 570   1           */
+ 571   1          if (sysutil_assert_event_get()
+ 572   1      #if H2_ID_CHECK
+                      || !h2_chip_family_support()
+              #endif // H2_ID_CHECK
+ 575   1              ) {
+ 576   2              sysutil_hang();
+ 577   2          }
+ 578   1      
+ 579   1          /*
+ 580   1           * Initialize hardware: PHY reset
+ 581   1           */
+ 582   1          phy_hw_init();  // Initializes the internal PHY by releasing resets.
+ 583   1      
+ 584   1          // Initialize hardware L2 port features
+ 585   1          h2_init_ports();
+ 586   1      
+ 587   1          /*
+ 588   1           * Initialize and check PHYs, hang the system if chek not passed.
+ 589   1           *
+ 590   1           * @note    Phy Init must come after the h2_init_port, because the port
+ 591   1           *          clocks must be enabled.
+ 592   1           */
+ 593   1          if (phy_tsk_init()) {
+ 594   2              sysutil_hang();
+ 595   2          }
+ 596   1      
+ 597   1          /* Turn on green front LED when power up done */
+ 598   1      #if FRONT_LED_PRESENT
+ 599   1          led_init();
+ 600   1      #endif
+ 601   1      
+ 602   1      #if defined(VTSS_ARCH_OCELOT)
+ 603   1      #if TRANSIT_LLDP || TRANSIT_LACP
+                  h2_rx_init();
+              #endif //#if TRANSIT_LLDP || TRANSIT_LACP    
+ 606   1      #elif defined(VTSS_ARCH_LUTON26)
+              #if TRANSIT_LLDP || LOOPBACK_TEST
+                  h2_rx_init();
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 11  
+
+              #endif
+              #endif
+ 611   1      
+ 612   1      #if TRANSIT_LLDP
+                  lldp_init();
+              #endif /* TRANSIT_LLDP */
+ 615   1      
+ 616   1      #if TRANSIT_LACP || TRANSIT_RSTP
+                  vtss_os_init();
+              #endif /* TRANSIT_LACP || TRANSIT_RSTP */
+ 619   1      
+ 620   1      
+ 621   1      #if TRANSIT_LAG
+                  h2_aggr_init();
+              #endif /* TRANSIT_LAG */    
+ 624   1      
+ 625   1      #if TRANSIT_E2ETC
+              #if TRANSIT_TCAM_IS2
+                  h2_tcam_init();
+              #endif
+                  h2_e2etc_init();
+              #endif
+ 631   1      
+ 632   1      #if (WATCHDOG_PRESENT && WATCHDOG_ENABLE)
+                  enable_watchdog();
+              #endif
+ 635   1      
+ 636   1      #if TRANSIT_VERIPHY
+                  phy_tsk(); // Activate state machine. We have seen that dual media doesn't pass VeriPhy if state machi
+             -ne is not activated.
+                  phy_veriphy_all();
+              #endif
+ 640   1      
+ 641   1      #if TRANSIT_ACTIPHY
+                  phy_actiphy_set(TRUE);
+              #endif
+ 644   1      
+ 645   1      #if TRANSIT_EEE
+                  eee_mgmt_int();
+              #endif
+ 648   1      
+ 649   1      #if TRANSIT_FAN_CONTROL
+                  fan_init();
+              #endif
+ 652   1      
+ 653   1      #if USE_HW_TWI
+ 654   1          /* Initial I2C */
+ 655   1          i2c_init();
+ 656   1      #endif
+ 657   1      
+ 658   1      #if !defined(NO_DEBUG_IF)
+ 659   1          print_cr_lf();
+ 660   1          println_str("Enter ? to get the CLI help command");
+ 661   1          CLI_PROMPT();
+ 662   1      #endif
+ 663   1      
+ 664   1          /************************************************************************
+ 665   1           *
+ 666   1           *
+ 667   1           * Loop forever
+ 668   1           *
+ 669   1           *
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 12  
+
+ 670   1           *
+ 671   1           ************************************************************************/
+ 672   1      
+ 673   1          while (TRUE) {
+ 674   2      
+ 675   2      #if defined(BRINGUP) // For board bringup stage
+              {
+                  #if !defined(NO_DEBUG_IF) && defined(HW_TEST_TIMTER)
+                          debug_test_timer();
+                  #endif /* HW_TEST_TIMTER */
+              
+                  #if !defined(NO_DEBUG_IF) && defined(HW_TEST_UART)
+                          debug_test_uart();
+                  #endif /* HW_TEST_UART */
+              
+                  cli_tsk();
+              }
+              
+              #else // !defined(BRINGUP)
+ 689   2      {
+ 690   3              /* For profiling/debug purposes */
+ 691   3              MAIN_LOOP_ENTER();
+ 692   3      
+ 693   3              /* If fatal error happens, reboot */
+ 694   3              if (sysutil_assert_event_get())
+ 695   3                  sysutil_reboot();
+ 696   3      
+ 697   3              /* Handle any commands received on RS232 interface */
+ 698   3      #if !defined(NO_DEBUG_IF)
+ 699   3              TASK(TASK_ID_CLI, cli_tsk());
+ 700   3      #endif
+ 701   3      
+ 702   3              /* Suspended. Skip all tasks besides CLI */
+ 703   3              if (sysutil_get_suspend())
+ 704   3                  continue;
+ 705   3      
+ 706   3      #if defined(VTSS_ARCH_OCELOT)
+ 707   3      #if TRANSIT_LLDP || TRANSIT_LACP
+                      TASK(TASK_ID_RX_PACKET, rx_packet_tsk());
+              #endif //#if TRANSIT_LLDP || TRANSIT_LACP        
+ 710   3      #elif defined(VTSS_ARCH_LUTON26)
+              #if TRANSIT_LLDP || LOOPBACK_TEST
+                      /* Handle any packets received */
+                      TASK(TASK_ID_RX_PACKET, rx_packet_tsk());
+              #endif
+              #endif
+ 716   3      #if TRANSIT_LACP
+                      TASK(TASK_ID_LACP, vtss_lacp_more_work());
+              #endif /* TRANSIT_LACP */
+ 719   3      
+ 720   3              // Handle 10ms timeout event
+ 721   3              handle_timeout_event_10ms();
+ 722   3      
+ 723   3              // Handle 100ms timeout event
+ 724   3              handle_timeout_event_100ms();
+ 725   3      
+ 726   3              // Handle 1 second timeout event
+ 727   3              handle_timeout_event_1sec();
+ 728   3      
+ 729   3              /* For profiling/debug purposes */
+ 730   3              MAIN_LOOP_EXIT();
+ 731   3      
+C51 COMPILER V9.60.0.0   MAIN                                                              11/30/2021 16:22:17 PAGE 13  
+
+ 732   3              /*
+ 733   3               * Sleep until next interrupt
+ 734   3               * Make sure to keep it as the last command
+ 735   3               */
+ 736   3              PCON = 0x1;
+ 737   3      }
+ 738   2      #endif /* BRINGUP */
+ 739   2          } // End of while (TRUE)
+ 740   1          
+ 741   1          
+ 742   1      #endif // BRINGUP
+ 743   1      }
+ 744          
+ 745          /****************************************************************************/
+ 746          /*                                                                          */
+ 747          /*  End of file.                                                            */
+ 748          /*                                                                          */
+ 749          /****************************************************************************/
+ 750          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    222    ----
+   CONSTANT SIZE    =     36    ----
+   XDATA SIZE       =      4       1
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

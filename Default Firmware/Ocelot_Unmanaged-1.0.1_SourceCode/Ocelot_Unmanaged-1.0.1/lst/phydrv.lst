@@ -1,0 +1,1449 @@
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE PHYDRV
+OBJECT MODULE PLACED IN ..\obj\phydrv.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\phy\phydrv.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbon
+                    -d;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_ap
+                    -i\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src
+                    -\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PR
+                    -INT(..\lst\phydrv.lst) TABS(2) OBJECT(..\obj\phydrv.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          
+  27          #include "timer.h"
+  28          
+  29          /** todo: move switch register access out of phydrv.c */
+  30          #include "h2io.h"
+  31          #include "vtss_api_base_regs.h"
+  32          
+  33          #include "phydrv.h"
+  34          #include "phymap.h"
+  35          #include "misc2.h"
+  36          #include "veriphy.h"
+  37          
+  38          #include "phy_base.h"
+  39          #include "phy_family.h"
+  40          
+  41          #if defined(PHYDRV_DEBUG_ENABLE)
+              #include "print.h"
+              #endif /* PHYDRV_DEBUG_ENABLE */
+  44          #include "print.h"
+  45          
+  46          /****************************************************************************
+  47           *
+  48           *
+  49           * Defines
+  50           *
+  51           *
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 2   
+
+  52           ****************************************************************************/
+  53          
+  54          #if LOOPBACK_TEST
+              #define __PHY_RESET__
+              #endif
+  57          
+  58          #if PERFECT_REACH_LNK_UP
+              #define WORST_SUBCHAN_MSE 120
+              #define WORST_AVERAGE_MSE 100
+              #endif
+  62          
+  63          /****************************************************************************
+  64           *
+  65           *
+  66           * Typedefs and enums
+  67           *
+  68           *
+  69           ****************************************************************************/
+  70          
+  71          /*****************************************************************************
+  72           *
+  73           *
+  74           * Prototypes for local functions
+  75           *
+  76           *
+  77           *
+  78           ****************************************************************************/
+  79          
+  80          /*****************************************************************************
+  81           *
+  82           *
+  83           * Local data
+  84           *
+  85           *
+  86           *
+  87           ****************************************************************************/
+  88          #if 0   // Uncalled function
+              static uchar code ecpdset[] = { 0, 5, 9, 12, 14 };
+              #define NUM_ECPD_SETTINGS (sizeof(ecpdset)/sizeof(ecpdset[0]))
+              #endif  // Uncalled function
+  92          
+  93          /*****************************************************************************
+  94           *
+  95           *
+  96           * Local functions
+  97           *
+  98           *
+  99           *
+ 100           ****************************************************************************/
+ 101          
+ 102          #ifdef __PHY_RESET__
+              static void assert_reset (vtss_port_no_t port_no) {
+                  uchar timeout;
+              
+                  // Work around of bugzilla#2521
+                  phy_page_std(port_no);
+                  phy_write(port_no, 0, 0x1000);
+                  delay_1(4); /* wait 4 msec before reseting */
+              
+              
+                  phy_write(port_no, 0, 0x8000);
+                  phy_write(port_no, 31, 0x0000);
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 3   
+
+                  delay_1(2); /* wait 1-2 msec before accessing registers */
+                  timeout = 0;
+                  while (phy_read(port_no, 0) & 0x8000) {
+                      if (++timeout > 200) {
+                          break; /* should not occur */
+                      }
+                      delay_1(1);
+                  }
+              }
+              #endif /* __PHY_RESET__ */
+ 124          
+ 125          #if PERFECT_REACH_LNK_UP
+              /**
+               * Computes optimal power setting level reductions based on calculated noise
+               * values from the specific cable being used.
+               *
+               * @see vtss_phy_power_opt
+               */
+              static void phy_power_optimizer (vtss_port_no_t port_no)
+              {
+                  uchar ncpd, ecpd_idx;
+                  uchar half_adc;
+                  ushort reg17;
+                  phy_id_t phy_id;
+                  ushort maxMse, meanMse, done;
+                  ecpd_idx = 0;
+                  ncpd = 1;
+                  phy_read_id(port_no, &phy_id);
+                  if ((phy_id.family == VTSS_PHY_FAMILY_ATOM)    ||
+                      (phy_id.family == VTSS_PHY_FAMILY_LUTON26) ||
+                      (phy_id.family == VTSS_PHY_FAMILY_TESLA)   ||
+                      (phy_id.family == VTSS_PHY_FAMILY_ELISE))
+                  {
+                      half_adc = 1;
+                  } else {
+                      half_adc = 0;
+                  }
+              
+                  phy_page_tr (port_no);
+                  phy_write (port_no, 16, 0xa3aa);
+                  done = phy_read (port_no, 17);
+                  phy_write (port_no, 18, 0x0003);
+                  phy_write (port_no, 17, done);
+                  phy_write (port_no, 16, 0x83aa);
+              
+                  done = 0;
+              
+                  while (done < 2) {
+                      phy_page_tp (port_no);
+                      phy_write_masked (port_no, 12, ((ushort)ecpdset[ecpd_idx] << 12)
+                                        | ((ushort)ncpd << 10), 0xfC00);
+                      if ((phy_id.family == VTSS_PHY_FAMILY_ATOM)  ||
+                          (phy_id.family == VTSS_PHY_FAMILY_LUTON26)  ||
+                          (phy_id.family == VTSS_PHY_FAMILY_TESLA) ||
+                          (phy_id.family == VTSS_PHY_FAMILY_ELISE))
+                      {
+                          phy_page_tr(port_no);
+                          phy_write(port_no, 16, 0xafe4);
+                          reg17 = phy_read(port_no, 17);
+                          reg17 = (reg17 & 0xffef) | ((half_adc & 1) << 4);
+                          phy_write(port_no, 17, reg17);
+                          phy_write(port_no, 16, 0x8fe4);
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 4   
+
+                      }
+                      if (done != 0) {
+                          if ((short)done < 0) {
+                              delay (MSEC_50);
+                          }
+                          ++done;
+                      } else {
+                          phy_page_tr (port_no);
+                          phy_write (port_no, 16, 0xa3c0);
+                          done = phy_read (port_no, 17);
+                          maxMse = done & 0x0fff;
+                          done = (done >> 12) | (phy_read (port_no, 18) << 4);
+                          meanMse = maxMse + done;
+                          if (done > maxMse)
+                              maxMse = done;
+              
+                          phy_write (port_no, 16, 0xa3c2);
+                          done = phy_read (port_no, 17);
+                          meanMse += (done & 0x0fff);
+                          if ((done & 0x0fff) > maxMse)
+                              maxMse = done & 0x0fff;
+                          done = (done >> 12) | (phy_read (port_no, 18) << 4);
+                          meanMse += done;
+                          if (done > maxMse)
+                              maxMse = done;
+              
+                          meanMse /= 4;
+                          done = 0;
+                          if ((maxMse  >= WORST_SUBCHAN_MSE) ||
+                                  (meanMse >= WORST_AVERAGE_MSE)) {
+                              if (ecpd_idx == 0) {
+                                  ncpd--;
+                                  done = (ushort)-1;
+                                  ecpd_idx = 1;
+                              } else {
+                                  ecpd_idx--;
+                                  done = 1;
+                              }
+                          } else if ((ecpd_idx == 0) && (ncpd < 2)) {
+                              ncpd++;
+                          } else if (++ecpd_idx >= NUM_ECPD_SETTINGS) {
+                              done = 2;
+                          }
+                      }
+                  }
+              
+                  phy_page_tr (port_no);
+                  phy_write (port_no, 16, 0xa3aa);
+                  done = phy_read (port_no, 17);
+                  phy_write (port_no, 18, 0x0000);
+                  phy_write (port_no, 17, done);
+                  phy_write (port_no, 16, 0x83aa);
+                  phy_page_std (port_no);
+              }
+              #endif  /* PERFECT_REACH_LNK_UP */
+ 231          
+ 232          /**
+ 233           * Await completion of a MIIM command.
+ 234           */
+ 235          static void phy_await_completed (uchar miim_no) small
+ 236          {
+ 237   1          ulong dat;
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 5   
+
+ 238   1      
+ 239   1          /* wait until data ready or timeout */
+ 240   1      #if defined(VTSS_ARCH_OCELOT)
+ 241   1          do {
+ 242   2              H2_READ(VTSS_DEVCPU_GCB_MIIM_MII_STATUS(miim_no), dat);
+ 243   2          } while(VTSS_X_DEVCPU_GCB_MIIM_MII_STATUS_MIIM_STAT_BUSY(dat));
+ 244   1      
+ 245   1      #elif defined(VTSS_ARCH_LUTON26)
+                  do {
+                      H2_READ(VTSS_DEVCPU_GCB_MIIM_MII_STATUS(miim_no), dat);
+                  } while(dat & VTSS_F_DEVCPU_GCB_MIIM_MII_STATUS_MIIM_STAT_BUSY);
+              #endif
+ 250   1      }
+ 251          
+ 252          #if VTSS_QUATTRO || VTSS_SPYDER || VTSS_ELISE || VTSS_TESLA || VTSS_ATOM12
+              static void phy_receiver_init (vtss_port_no_t port_no)
+              {
+              #if PERFECT_REACH_LNK_UP
+                  ushort reg17;
+              #endif
+                  phy_id_t phy_id;
+                  phy_read_id(port_no, &phy_id);
+                  phy_page_tp(port_no);
+                  phy_write_masked(port_no, 12, 0x0200, 0x0300);
+              #if PERFECT_REACH_LNK_UP
+                  phy_write_masked(port_no, 12, 0x0000, 0xfc00);
+                  if ((phy_id.family == VTSS_PHY_FAMILY_ATOM)    ||
+                      (phy_id.family == VTSS_PHY_FAMILY_LUTON26) ||
+                      (phy_id.family == VTSS_PHY_FAMILY_TESLA)   ||
+                      (phy_id.family == VTSS_PHY_FAMILY_ELISE))
+                  {
+                      phy_page_tr(port_no);
+                      phy_write(port_no, 16, 0xafe4);
+                      reg17 = phy_read(port_no, 17);
+                      reg17 = (reg17 & 0xffef); //Clear half_adc as desired
+                      phy_write(port_no, 17, reg17);
+                      phy_write(port_no, 16, 0x8fe4);
+                  } else
+                  if (1) {
+                      phy_write_masked(port_no, 24, 0x2000, 0x2000);
+                  }
+              #endif  /* PERFECT_REACH_LNK_UP */
+                  phy_page_std(port_no);
+              }
+              #endif  // VTSS_QUATTRO || VTSS_SPYDER || VTSS_ELISE || VTSS_TESLA || VTSS_ATOM12
+ 283          
+ 284          #if TRANSIT_EEE
+              /**
+               * Write to a MMD register (clause 45 read-modify mask write)
+               */
+              static void vtss_phy_mmd_reg_wr_masked(const vtss_port_no_t port_no,
+                                                     const u16            devad,
+                                                     const u16            addr,
+                                                     const u16            data_val,
+                                                     const u16            mask)
+              {
+                  u16     current_reg_val;
+                  u16     new_reg_val;
+              
+                  // Read current value of the register
+                  current_reg_val = phy_mmd_rd(port_no, devad, addr);
+              
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 6   
+
+                  // Modify current value and write.
+                  new_reg_val     = (current_reg_val & ~mask) | (data_val & mask) ;
+                  phy_write(port_no, 14, new_reg_val);
+              }
+              #endif // TRANSIT_EEE
+ 305          
+ 306          static BOOL _phy_read_reg_data(vtss_cport_no_t chip_port, uchar reg_no, ushort *phy_data) small
+ 307          {
+ 308   1          ulong  reg_data;
+ 309   1          uchar  miim_no = phy_map_miim_no(chip_port);
+ 310   1      
+ 311   1          /* Addressing part */
+ 312   1          reg_data =
+ 313   1      #if defined(VTSS_ARCH_OCELOT)
+ 314   1          VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_VLD(1) | /* Valid command */
+ 315   1      #elif defined(VTSS_ARCH_LUTON26)
+                  VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_VLD | /* Valid command */
+              #endif
+ 318   1          VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_REGAD(reg_no) | /* Register address */
+ 319   1          VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_PHYAD(phy_map_phy_no(chip_port))| /* Phy/port address */
+ 320   1          VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_OPR_FIELD(2); /* Read op, Clause 22 */
+ 321   1      
+ 322   1          /* Enqueue MIIM operation to be executed */
+ 323   1          H2_WRITE(VTSS_DEVCPU_GCB_MIIM_MII_CMD(miim_no), reg_data);
+ 324   1      
+ 325   1          /* Wait for MIIM operation to finish */
+ 326   1          phy_await_completed(miim_no);
+ 327   1      
+ 328   1          H2_READ(VTSS_DEVCPU_GCB_MIIM_MII_DATA(miim_no), reg_data);
+ 329   1      #if defined(VTSS_ARCH_OCELOT)
+ 330   1          if (VTSS_X_DEVCPU_GCB_MIIM_MII_DATA_MIIM_DATA_SUCCESS(reg_data))
+ 331   1      #elif defined(VTSS_ARCH_LUTON26)
+                  if (dat & VTSS_F_DEVCPU_GCB_MIIM_MII_DATA_MIIM_DATA_SUCCESS(3))
+              #endif
+ 334   1          {
+ 335   2      #if defined(PHYDRV_DEBUG_ENABLE)
+                      print_str("%% Error: phy_read() failed, chip_port=");
+                      print_dec(chip_port);
+                      print_str(" reg_no=");
+                      print_dec(reg_no);
+                      print_cr_lf();
+              #endif // PHYDRV_DEBUG_ENABLE
+ 342   2      
+ 343   2              return 1; // Read failed
+ 344   2          }
+ 345   1      
+ 346   1          *phy_data = (ushort) VTSS_X_DEVCPU_GCB_MIIM_MII_DATA_MIIM_DATA_RDDATA(reg_data);
+ 347   1          return 0;
+ 348   1      }
+ 349          
+ 350          /*****************************************************************************
+ 351           *
+ 352           *
+ 353           * Public functions
+ 354           *
+ 355           *
+ 356           *
+ 357           ****************************************************************************/
+ 358          /**
+ 359           * Read a PHY register.
+ 360           *
+ 361           * @param port_no   The port number to which the PHY is attached.
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 7   
+
+ 362           * @param reg_no    the PHY register number (0-31).
+ 363           */
+ 364          ushort phy_read (vtss_port_no_t port_no, uchar reg_no) small
+ 365          {
+ 366   1          ushort phy_data;
+ 367   1      
+ 368   1          if (!phy_map(port_no)) {
+ 369   2      #if defined(PHYDRV_DEBUG_ENABLE)
+                      print_str("%% Error: Wrong parameter when calling phy_read(), chip_port=");
+                      print_dec(port_no);
+                      print_str(" reg_no=");
+                      print_dec(reg_no);
+                      print_cr_lf();
+              #endif // PHYDRV_DEBUG_ENABLE
+ 376   2              return 0;
+ 377   2          }
+ 378   1      
+ 379   1          // EA = 0; // Disable interrupt while reading the PHY register value (indirect access).
+ 380   1          while(_phy_read_reg_data(port_no, reg_no, &phy_data)); // Infinite loop until read success
+ 381   1          // EA = 1; // Enable interrupt
+ 382   1      
+ 383   1          return phy_data;
+ 384   1      }
+ 385          
+ 386          /**
+ 387           * Write to a PHY register.
+ 388           *
+ 389           * @param port_no   The port number to which the PHY is attached.
+ 390           * @param reg_no    The PHY register number (0-31).
+ 391           * @param value     Value to be written.
+ 392           */
+ 393          void phy_write(vtss_port_no_t   port_no,
+ 394                         uchar            reg_no,
+ 395                         ushort           value) small
+ 396          {
+ 397   1          uchar  miim_no;
+ 398   1          ulong  dat;
+ 399   1      
+ 400   1          if (!phy_map(port_no)) {
+ 401   2      #if defined(PHYDRV_DEBUG_ENABLE)
+                      print_str("%% Error: Wrong parameter when calling phy_write(), port_no=");
+                      print_dec(port_no);
+                      print_str(" reg_no=");
+                      print_dec(reg_no);
+                      print_cr_lf();
+              #endif // PHYDRV_DEBUG_ENABLE
+ 408   2              return;
+ 409   2          }
+ 410   1      
+ 411   1          miim_no = phy_map_miim_no(port_no);
+ 412   1      
+ 413   1          // EA = 0; // Disable interrupt while writing the PHY register value (indirect access).
+ 414   1      
+ 415   1      #if defined(VTSS_ARCH_OCELOT)
+ 416   1          dat = VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_OPR_FIELD(1) | /* Write op */
+ 417   1                VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_WRDATA(value) | /* value */
+ 418   1                VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_VLD(1) | /* Valid command */
+ 419   1                VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_REGAD(reg_no) | /* Register address */
+ 420   1                VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_PHYAD(phy_map_phy_no(port_no)); /* Phy/port address */
+ 421   1      
+ 422   1      #elif defined(VTSS_ARCH_LUTON26)
+                  dat = VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_OPR_FIELD(1) | /* Write op */
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 8   
+
+                        VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_WRDATA(value) | /* value */
+                        VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_VLD | /* Valid command */
+                        VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_REGAD(reg_no) | /* Register address */
+                        VTSS_F_DEVCPU_GCB_MIIM_MII_CMD_MIIM_CMD_PHYAD(phy_map_phy_no(port_no)); /* Phy/port address */
+              #endif
+ 429   1      
+ 430   1          /* Enqueue MIIM operation to be executed */
+ 431   1          H2_WRITE(VTSS_DEVCPU_GCB_MIIM_MII_CMD(miim_no), dat);
+ 432   1      
+ 433   1          /* Wait for MIIM operation to finish */
+ 434   1          phy_await_completed(miim_no);
+ 435   1      
+ 436   1          // EA = 1; // Enable interrupt
+ 437   1      }
+ 438          
+ 439          /**
+ 440           * Update specified bit(s) of a PHY register.
+ 441           *
+ 442           * @param port_no   The port number to which the PHY is attached.
+ 443           * @param reg_no    The PHY register number (0-31).
+ 444           * @param value     Holds bits (in right positions) to be written.
+ 445           * @param mask      Bit mask specifying the bits to be updated.
+ 446           *
+ 447           * Example: To set AN_EN and Restart_AN bits in register 0, write:
+ 448           *          phy_write_masked(miim_no, phy_no, 0, 0x1200, 0x1200);
+ 449           */
+ 450          void phy_write_masked(vtss_port_no_t port_no,
+ 451                                uchar          reg_no,
+ 452                                ushort         value,
+ 453                                ushort         mask) small
+ 454          {
+ 455   1          phy_write(port_no, reg_no, (phy_read(port_no, reg_no) & ~mask) | (value & mask));
+ 456   1      }
+ 457          
+ 458          int phy_mmd_rd(const vtss_port_no_t port_no,
+ 459                         const u16            devad,
+ 460                         const u16            addr)
+ 461          {
+ 462   1          phy_page_std(port_no);
+ 463   1          phy_write(port_no, 13, devad); // Setup cmd=address + devad address
+ 464   1          phy_write(port_no, 14, addr);  // Setup address
+ 465   1          phy_write(port_no, 13, (1 << 14) + devad); // Setup cmd=data + devad address
+ 466   1      
+ 467   1          return phy_read(port_no, 14);  // read data
+ 468   1      }
+ 469          
+ 470          void phy_page_std (vtss_port_no_t port_no) {
+ 471   1          phy_write(port_no, 31, 0);
+ 472   1      }
+ 473          
+ 474          #if VTSS_ATOM12_B || VTSS_ATOM12_C || VTSS_ATOM12_D || VTSS_TESLA
+              void phy_page_ext (vtss_port_no_t port_no) {
+                  phy_write(port_no, 31, 1);
+              }
+              
+              void phy_page_ext2 (vtss_port_no_t port_no) {
+                  phy_write(port_no, 31, 2);
+              }
+              #endif  // VTSS_ATOM12_B || VTSS_ATOM12_C || VTSS_ATOM12_D || VTSS_TESLA
+ 483          
+ 484          #if VTSS_QUATTRO || VTSS_SPYDER || VTSS_ELISE || VTSS_TESLA || VTSS_ATOM12
+              void phy_page_gp (vtss_port_no_t port_no) {
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 9   
+
+                  phy_write(port_no, 31, GP_PAGE_CODE);
+              }
+              #endif // VTSS_QUATTRO || VTSS_SPYDER || VTSS_ELISE || VTSS_TESLA || VTSS_ATOM12
+ 489          
+ 490          void phy_page_tp (vtss_port_no_t port_no) {
+ 491   1          phy_write(port_no, 31, TP_PAGE_CODE);
+ 492   1      }
+ 493          
+ 494          void phy_page_tr (vtss_port_no_t port_no) {
+ 495   1          phy_write(port_no, 31, TR_PAGE_CODE);
+ 496   1      }
+ 497          
+ 498          /* Fixme: Tune the two functions to fit VSC8522/12 */
+ 499          uchar phy_get_speed_and_fdx (vtss_port_no_t port_no)
+ 500          {
+ 501   1          uchar speed_fdx_mode;
+ 502   1          ushort reg_val;
+ 503   1      #if 0
+                  phy_id_t phy_id;
+              
+                  phy_read_id(port_no, &phy_id);
+              
+                  if (phy_id.vendor != PHY_VENDOR_VTSS) {
+                      /* Get speed and duplex mode into speed_fdx_mode variable */
+                      PHY_READ_SPEED_AND_FDX(port_no, reg_val, speed_fdx_mode);
+                      return speed_fdx_mode;
+                  }
+              #endif
+ 514   1      
+ 515   1          /* Get info about speed and duplex mode from PHY reg. 28 */
+ 516   1          reg_val = phy_read(port_no, 28);
+ 517   1      
+ 518   1          /* set speed field (bit 1:0) = bit 4:3 of PHY reg. */
+ 519   1          speed_fdx_mode = ((uchar) reg_val >> 3) & 0x03;
+ 520   1      
+ 521   1          /* update full duplex bit */
+ 522   1          if (reg_val & 0x20) {
+ 523   2              speed_fdx_mode |= LINK_MODE_FDX_MASK;
+ 524   2          }
+ 525   1      
+ 526   1      #if PHY_HDX_FLOW_CTRL_MODE
+                  if ((reg_val & 0x20) == 0) {
+                      speed_fdx_mode |= LINK_MODE_PAUSE_MASK;
+                  }
+              #endif /* PHY_HDX_FLOW_CTRL_MODE */
+ 531   1      
+ 532   1      #if PHY_AN_FAIL_FLOW_CTRL_MODE
+                  /* Enable flow control support when LP doesn't have auto-nego  */
+                  if ((reg_val & 0x8000) && (phy_read(port_no, 6) & 0x1) == 0) {
+                      speed_fdx_mode |= LINK_MODE_PAUSE_MASK;
+                  }
+              #endif /* PHY_AN_FAIL_FLOW_CTRL_MODE */
+ 538   1      
+ 539   1          return speed_fdx_mode;
+ 540   1      }
+ 541          
+ 542          #if LOOPBACK_TEST
+              /**
+               * Set forced speed.
+               */
+              void phy_set_forced_speed (vtss_port_no_t port_no, uchar link_mode)
+              {
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 10  
+
+                  ushort val;
+              
+                  if (link_mode & LINK_MODE_INT_LOOPBACK) {
+                      /* temporary */
+                      phy_write(port_no, 0, 0);
+                      /* temporary ends */
+              
+                      if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_10) {
+                          val = 0x0000;
+                      } else if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_100) {
+                          val = 0x2000;
+                      } else if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_1000) {
+                          val = 0x0040;
+                      }
+                      if (link_mode & LINK_MODE_FDX_MASK) {
+                          val |= 0x100;
+                      }
+                      if (link_mode & LINK_MODE_INT_LOOPBACK) {
+                          val |= 0x4000;
+                      }
+              
+                      phy_write(port_no, 0, val);
+                  } else {
+                      if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_10) {
+                          /* Update register 4 with 10 advertising, plus pause capability */
+                          phy_write(port_no, 4, 0x0161);
+                          /*  Update register 9 to disable 1000 Mbps advertising */
+                          phy_write(port_no, 9, 0x0400);
+                      } else if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_100) {
+                          /* Update register 4 with 100 advertising, plus pause capability */
+                          phy_write(port_no, 4, 0x0581);
+                          /*  Update register 9 to disable 1000 Mbps advertising */
+                          phy_write(port_no, 9, 0x0400);
+                      } else if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_1000) {
+                          /* Update register 4 with 100 advertising, plus pause capability */
+                          phy_write(port_no, 4, 0x0101);
+                          /*  Update register 9 to disable 1000 Mbps advertising */
+                          phy_write(port_no, 9, 0x0600);
+                      }
+                      /* Restart auto-negotiation */
+                      phy_restart_aneg(port_no);
+                  }
+              }
+              #endif
+ 592          
+ 593          /* ************************************************************************ */
+ 594          bool phy_link_status (vtss_cport_no_t chip_port) small
+ 595          /* ------------------------------------------------------------------------ --
+ 596           * Purpose     : Read link status bit from PHY.
+ 597           * Remarks     :
+ 598           * Restrictions:
+ 599           * See also    :
+ 600           * Example     :
+ 601           ****************************************************************************/
+ 602          {
+ 603   1          return ((phy_read(chip_port, 1) & 0x0004) != 0);
+ 604   1      }
+ 605          
+ 606          /**
+ 607           * Do any PHY settings after link transition to up.
+ 608           *
+ 609           * @see vtss_phy_status_get_private()
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 11  
+
+ 610           */
+ 611          void phy_do_link_up_settings (vtss_cport_no_t chip_port,
+ 612                                        uchar           link_mode,
+ 613                                        uchar            power_mode)
+ 614          {
+ 615   1      #if VTSS_SPYDER
+                  phy_id_t phy_id;
+              #endif // VTSS_SPYDER
+ 618   1      
+ 619   1          /* Possibly disable echo-mode on PHY when running half-duplex at 10M */
+ 620   1          if ((link_mode & (LINK_MODE_SPEED_MASK | LINK_MODE_FDX_MASK)) == LINK_MODE_SPEED_10)
+ 621   1              {
+ 622   2              PHY_DISABLE_ECHO_MODE(chip_port);
+ 623   2          } else {
+ 624   2              PHY_ENABLE_ECHO_MODE(chip_port);
+ 625   2          }
+ 626   1      
+ 627   1          if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_1000)
+ 628   1              phy_receiver_reconfig(chip_port, power_mode);
+ 629   1      
+ 630   1      #if VTSS_SPYDER
+                  /* Read PHY id to determine action */
+                  phy_read_id(chip_port, &phy_id); 
+                  if ((phy_id.family == VTSS_PHY_FAMILY_SPYDER) && (phy_id.revision == 0)) {
+              
+                      uchar rx_tr_lock;
+              
+                      phy_page_tr(chip_port);
+                      phy_write(chip_port, 16, 0xa60c);
+                      phy_write(chip_port, 16, 0xa60c);
+                      rx_tr_lock = (phy_read(chip_port, 17) >> 3) & 0x01;
+                      if (!rx_tr_lock) {
+                          phy_write(chip_port, 17, 0x0010);
+                          phy_write(chip_port, 16, 0x8604);
+                          phy_write(chip_port, 17, 0x00df);
+                          phy_write(chip_port, 16, 0x8600);
+                          phy_write(chip_port, 17, 0x00ff);
+                          phy_write(chip_port, 16, 0x8600);
+                          phy_write(chip_port, 17, 0x0000);
+                          phy_write(chip_port, 16, 0x8604);
+                          phy_write(chip_port, 16, 0xa60c);
+                          phy_write(chip_port, 16, 0xa60c);
+                          rx_tr_lock = (phy_read(chip_port, 17) >> 3) & 0x01;
+                          if (!rx_tr_lock) {
+                          }
+                      }
+                      phy_page_std(chip_port);
+                  }
+              #endif /* VTSS_SPYDER */
+ 659   1      }
+ 660          
+ 661          /**
+ 662           * Do any PHY settings after link transition to down.
+ 663           */
+ 664          void phy_do_link_down_settings (vtss_port_no_t port_no)
+ 665          {
+ 666   1          phy_write_masked(port_no, 0, 0x800, 0x800);
+ 667   1          delay_1(2);
+ 668   1          phy_write_masked(port_no, 0, 0x000, 0x800);
+ 669   1      }
+ 670          
+ 671          /**
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 12  
+
+ 672           * Set the PHY in power down mode
+ 673           */
+ 674          void phy_power_down (vtss_port_no_t port_no)
+ 675          {
+ 676   1          phy_write_masked(port_no, 0, 0x800, 0x800);
+ 677   1      }
+ 678          
+ 679          /**
+ 680           * @see Reference vtss_phy_optimize_receiver_reconfig()
+ 681           */
+ 682          void phy_receiver_reconfig(vtss_cport_no_t chip_port, uchar power_mode)
+ 683          {
+ 684   1          uchar       vga_state_a;
+ 685   1          short       max_vga_state_to_optimize;
+ 686   1          phy_id_t    phy_id;
+ 687   1      
+ 688   1          phy_read_id(chip_port, &phy_id);
+ 689   1      
+ 690   1          switch (phy_id.family) {
+ 691   2          case VTSS_PHY_FAMILY_ATOM:
+ 692   2          case VTSS_PHY_FAMILY_LUTON26:
+ 693   2          case VTSS_PHY_FAMILY_TESLA:
+ 694   2          case VTSS_PHY_FAMILY_ELISE:
+ 695   2          case VTSS_PHY_FAMILY_FERRET:
+ 696   2              /*
+ 697   2               * 65nm PHY adjusted VGA window to more effectively use dynamic range
+ 698   2               * as a result, VGA gains for a given cable length are higher here.
+ 699   2               */
+ 700   2              max_vga_state_to_optimize =  -9;
+ 701   2              break;
+ 702   2          default:
+ 703   2              max_vga_state_to_optimize = -12;
+ 704   2              break;
+ 705   2          }
+ 706   1      
+ 707   1          phy_page_tr(chip_port);
+ 708   1          phy_write(chip_port, 16, 0xaff0);
+ 709   1          vga_state_a = (phy_read(chip_port, 17) >> 4) & 0x01f;
+ 710   1          if ((vga_state_a < 16) || (vga_state_a > (max_vga_state_to_optimize & 0x1f)))
+ 711   1          {
+ 712   2              phy_page_tp(chip_port);
+ 713   2              phy_write_masked(chip_port, 12, 0x0000, 0x0300);
+ 714   2          }
+ 715   1      #if PERFECT_REACH_LNK_UP
+                  else {
+                      power_mode = 0;
+                          if (!(phy_id.family == VTSS_PHY_FAMILY_ATOM)    &&
+                              !(phy_id.family == VTSS_PHY_FAMILY_LUTON26) &&
+                              !(phy_id.family == VTSS_PHY_FAMILY_TESLA)   &&
+                              !(phy_id.family == VTSS_PHY_FAMILY_ELISE)   &&
+                              !(phy_id.family == VTSS_PHY_FAMILY_FERRET))
+                          {
+                              phy_page_tp(chip_port);
+                              phy_write_masked(chip_port, 24, 0x0000, 0x2000);
+                          }
+                          phy_power_optimizer(chip_port);
+                  }
+              #else
+ 730   1          power_mode = power_mode;    // Quiet Kail compile warning
+ 731   1      #endif /* PERFECT_REACH_LNK_UP */
+ 732   1      
+ 733   1          phy_page_std(chip_port);
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 13  
+
+ 734   1      }
+ 735          
+ 736          /**
+ 737           * Restart auto-negotiation on the PHY connected to the specified port.
+ 738           */
+ 739          void phy_restart_aneg (vtss_port_no_t port_no)
+ 740          {
+ 741   1          /* start autonegotiation by writing to register 0 */
+ 742   1          phy_write_masked(port_no, 0, 0x1200, 0x1200);
+ 743   1          delay_1(2);
+ 744   1      }
+ 745          
+ 746          /* ------------------------------------------------------------------------ --
+ 747           * Purpose     : Do the necessary hardware configuration of a PHY before it
+ 748           *               has been reset.
+ 749           * Remarks     :
+ 750           * Restrictions:
+ 751           * See also    :
+ 752           * Example     :
+ 753           ****************************************************************************/
+ 754          void phy_pre_reset (vtss_port_no_t port_no)
+ 755          {
+ 756   1          phy_id_t phy_id;
+ 757   1      
+ 758   1          /* Read PHY id to determine action */
+ 759   1          phy_read_id(port_no, &phy_id);
+ 760   1      
+ 761   1          switch (phy_id.family) {
+ 762   2      #if VTSS_COBRA
+                  case VTSS_PHY_FAMILY_COBRA:
+                      // COBRA not necessary for pre_reset
+                      // cobra_init_seq(port_no);
+                      break;
+              #endif
+ 768   2      #if VTSS_ATOM12
+                  case VTSS_PHY_FAMILY_LUTON26:
+                      atom12_init_seq_pre(port_no, &phy_id);
+                      break;
+                  case VTSS_PHY_FAMILY_ATOM:
+                      atom12_init_seq_pre(port_no, &phy_id);
+                      break;
+              #endif
+ 776   2      #if VTSS_TESLA
+                  case VTSS_PHY_FAMILY_TESLA:
+                      tesla_init_seq_pre(port_no, &phy_id);
+                      break;
+              #endif
+ 781   2      #if VTSS_ELISE
+                  case VTSS_PHY_FAMILY_ELISE:
+                      elise_init_seq_pre(port_no, &phy_id);
+                      break;
+              #endif
+ 786   2          default:
+ 787   2              // No pre-initialising needed
+ 788   2              break;
+ 789   2          }
+ 790   1      }
+ 791          
+ 792          #ifdef __PHY_RESET__
+              /**
+               * Perform a reset of the PHY attached to the specified port.
+               */
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 14  
+
+              void phy_reset (vtss_port_no_t port_no)
+              {
+                  assert_reset(port_no);
+                  phy_post_reset(port_no);
+              }
+              #endif  // __PHY_RESET__
+ 802          
+ 803          /**
+ 804           * Do the necessary hardware configuration of a PHY after it has been reset.
+ 805           *
+ 806           * @See vtss_phy_reset_private() in API.
+ 807           */
+ 808          void phy_post_reset (vtss_port_no_t port_no)
+ 809          {
+ 810   1          phy_id_t    phy_id;
+ 811   1      
+ 812   1          /* Read PHY id to determine action */
+ 813   1          phy_read_id(port_no, &phy_id);
+ 814   1      
+ 815   1          switch (phy_id.family) {
+ 816   2      #if VTSS_COBRA
+                  case VTSS_PHY_FAMILY_COBRA:
+                      cobra_init_seq(port_no);
+                      break;
+              #endif // VTSS_COBRA
+ 821   2      
+ 822   2      #if VTSS_ATOM12
+                  case VTSS_PHY_FAMILY_LUTON26:
+                      atom12_init_seq(port_no, &phy_id);
+              
+              #if defined(LUTON26_L25)
+                      // Release COMA_MODE after both internal and external PHYs are configured
+                      //     If COMA_MODE pin is connected between Luton26 and Atom12, only do
+                      //     this on one device; otherwise, you'll need to do it on both or use
+                      //     some other means to control the COMA_MODE pin
+                      phy_write(port_no, 31, 0x10); // Change page
+                      phy_write(port_no, 14, 0x800); // Force coma pin
+              #endif /* LUTON26_L25 */
+              
+                      phy_write(port_no, 31, 0); // Change page back to standard page
+              
+                      phy_receiver_init(port_no);
+                      break;
+              
+                  case VTSS_PHY_FAMILY_ATOM:
+              #if 0   // Uncalled function
+                      if(!pll5g_locked && port_no == 12) {
+                          pll5g_locked = init_atom_phase_loop_locked(port_no);
+                          if(pll5g_locked) {
+                              print_str("locked on atom12");
+                          } else {
+                              print_str("unlocked on atom12");
+                          }
+                      }
+              #endif  // Uncalled function
+                      atom12_init_seq(port_no, &phy_id);
+                      phy_receiver_init(port_no);
+                      break;
+              #endif /* VTSS_ATOM12 */
+ 855   2      
+ 856   2      #if VTSS_TESLA
+                  case VTSS_PHY_FAMILY_TESLA:
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 15  
+
+                      tesla_init_seq(port_no, &phy_id);
+                      phy_receiver_init(port_no);
+                      break;
+              #endif // VTSS_TESLA
+ 862   2      
+ 863   2      #if VTSS_ELISE
+                  case VTSS_PHY_FAMILY_ELISE: {
+                      elise_init_seq(port_no, &phy_id);
+              
+              #if defined(LUTON26_L16) && defined(LUTON26_L16_QSGMII_EXT_PHY)
+                      if (port_no == 15) {
+                          // Release COMA_MODE after both internal and external PHYs are configured
+                          //     If COMA_MODE pin is connected between Luton26 and Atom12, only do
+                          //     this on one device; otherwise, you'll need to do it on both or use
+                          //     some other means to control the COMA_MODE pin
+                          phy_write(port_no, 31, 0x10); // Change page
+                          phy_write(port_no, 14, 0x800); // Force coma pin
+                          phy_write(port_no, 31, 0); // Change page back to standard page        phy_receiver_init(port_
+             -no);
+                      }
+              #endif /* LUTON26_L16 && LUTON26_L16_QSGMII_EXT_PHY */
+              
+                      phy_write(port_no, 31, 0x10); // Change page
+                      phy_write_masked(port_no, 14, 0x00,0x3000); // Force coma pin
+                      phy_write(port_no, 31, 0); // Change page back to standard page        phy_receiver_init(port_no);
+                      phy_receiver_init(port_no);
+                      break;
+                  }
+              #endif // VTSS_ELISE
+ 886   2      
+ 887   2      #if VTSS_SPYDER
+                  case VTSS_PHY_FAMILY_SPYDER: {
+                      if ((phy_id.model == PHY_MODEL_VTSS_8558) || (phy_id.model == PHY_MODEL_VTSS_8658)) {
+                      }
+                      init_seq_8538(port_no, &phy_id);
+                      phy_receiver_init(port_no);
+                      phy_write(port_no, 29, PHY_LED_MODE);
+              #if PERFECT_REACH_LNK_UP
+                      phy_page_ext(port_no);
+                      phy_write(port_no, 0x11, 0x80);
+                      phy_page_std(port_no);
+              #endif
+                      /* set LED to blink with 5 Hz */
+                      phy_write_masked(port_no, 30, 0x0400, 0x0400);
+                      phy_write_masked(port_no, 30, 0x0000, 0x000f);
+                      /* disable fiber/copper LED combine */
+                      phy_write_masked(port_no, 30, 0x8000, 0x8000);
+                      break;
+              #endif // VTSS_SPYDER
+ 906   2      
+ 907   2      #if VTSS_QUATTRO
+                  case VTSS_PHY_FAMILY_QUATTRO: {
+                      phy_write(port_no, 23, VTSS_REG_23);
+              
+                      assert_reset(port_no);
+                      init_seq_8224(port_no, &phy_id);
+                      phy_receiver_init(port_no);
+                      break;
+                  }
+              #endif // VTSS_QUATTRO
+ 917   2      
+ 918   2      #if VTSS_ENZO
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 16  
+
+                  case VTSS_PHY_FAMILY_ENZO: {
+                      if (phy_id.model == PHY_MODEL_VTSS_8664) {
+                          phy_write_masked(port_no, 23, 0x1000, 0x1000);
+                          assert_reset(port_no);
+                          init_seq_8634_8664(port_no, &phy_id);
+                      } else {
+                          print_str("Unknown model ");
+                          print_dec(phy_id.model);
+                          print_cr_lf();
+                      }
+                      break;
+                  }
+              #endif // VTSS_ENZO
+ 932   2      
+ 933   2          }
+ 934   1      }
+ 935          
+ 936          /**
+ 937           * Do the necessary setup configuration of a PHY.
+ 938           */
+ 939          void phy_setup (vtss_port_no_t port_no)
+ 940          {
+ 941   1          phy_id_t                phy_id;
+ 942   1      #if defined(LUTON26_L25) || VTSS_ELISE || VTSS_TESLA || VTSS_COBRA
+                  vtss_phy_reset_conf_t   phy_conf;
+              #endif
+ 945   1      
+ 946   1          /* Read PHY id to determine action */
+ 947   1          phy_read_id(port_no, &phy_id);
+ 948   1      
+ 949   1            switch (phy_id.family) {
+ 950   2      #if VTSS_COBRA
+                      case VTSS_PHY_FAMILY_COBRA: {
+              #if defined(DEBUG)
+                      print_str("Cobra found at port = ");
+                      print_dec(port_no);
+                      print_cr_lf();
+              #endif
+                      phy_conf.mac_if = VTSS_PORT_INTERFACE_SGMII;
+                      phy_conf.media_if = VTSS_PHY_MEDIA_IF_CU;
+                      cobra_mac_media_if_setup(port_no, &phy_conf);
+                      break;
+                  }
+              #endif // VTSS_COBRA
+ 963   2      
+ 964   2      #if VTSS_ATOM12
+                  case VTSS_PHY_FAMILY_LUTON26: {
+                      break;
+                  }
+              
+                  case VTSS_PHY_FAMILY_ATOM: {
+              #if defined(LUTON26_L25)
+                      if ((port_no > 11) && (port_no < 20)) {
+                          phy_conf.cu_preferred   = FALSE;
+                          phy_conf.mac_if         = VTSS_PORT_INTERFACE_QSGMII;
+                          phy_conf.media_if       = VTSS_PHY_MEDIA_IF_CU;
+                          atom12_mac_media_if_setup(port_no, &phy_conf);
+                      } else if (port_no >= 20) {
+                           phy_conf.cu_preferred  = FALSE;
+                           phy_conf.mac_if        = VTSS_PORT_INTERFACE_QSGMII;
+                           phy_conf.media_if      = VTSS_PHY_MEDIA_IF_AMS_CU_1000BX;
+                           atom12_mac_media_if_setup(port_no, &phy_conf);
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 17  
+
+                      }
+              #endif // LUTON26_L25
+                      break;
+                  }
+              #endif // VTSS_ATOM12
+ 986   2      
+ 987   2      #if VTSS_TESLA
+                  case VTSS_PHY_FAMILY_TESLA: {
+                      phy_conf.cu_preferred = FALSE;
+              
+              #ifdef LUTON26_L16_QSGMII_EXT_PHY
+                      phy_conf.mac_if       = VTSS_PORT_INTERFACE_QSGMII;
+                      println_str("mac_if:VTSS_PORT_INTERFACE_QSGMII");
+              #else
+                      phy_conf.mac_if       = VTSS_PORT_INTERFACE_SGMII;
+                      println_str("mac_if:VTSS_PORT_INTERFACE_SGMII");
+              #endif
+                      phy_conf.media_if     = VTSS_PHY_MEDIA_IF_CU;
+                      tesla_mac_media_if_setup(port_no, &phy_conf);
+                      break;
+                  }
+              #endif // VTSS_TESLA
+1003   2      
+1004   2      #if VTSS_ELISE
+                  case VTSS_PHY_FAMILY_ELISE: {
+              #if defined(DEBUG)
+                      print_str("Elise found at port = ");
+                      print_dec(port_no);
+                      print_cr_lf();
+              #endif
+                      phy_conf.cu_preferred = FALSE;
+                      phy_conf.mac_if       = VTSS_PORT_INTERFACE_QSGMII;
+                      phy_conf.media_if     = VTSS_PHY_MEDIA_IF_CU;
+                      elise_mac_media_if_setup(port_no, &phy_conf);
+                      break;
+                  }
+              #endif // VTSS_ELISE
+1018   2      
+1019   2          default:
+1020   2              break;
+1021   2          }
+1022   1      }
+1023          
+1024          #if TRANSIT_EEE
+              void vtss_phy_eee_ena_private(const vtss_port_no_t port_no,
+                                            const BOOL           enable)
+              {
+                  phy_id_t    phy_id;
+                  u16         ctrl;
+              
+                  /* Read PHY id to determine action */
+                  phy_read_id(port_no, &phy_id);
+                  
+                  //print_str("port_no: "); print_dec(port_no);
+                  //print_str("phy_id: ");
+                  //print_hex_w(phy_id.family); 
+                //print_cr_lf();
+              
+                  switch (phy_id.family) {
+              #if VTSS_COBRA
+                  case VTSS_PHY_FAMILY_COBRA:
+                      break;
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 18  
+
+              #endif
+                  case VTSS_PHY_FAMILY_ATOM:
+                  case VTSS_PHY_FAMILY_LUTON26:
+              #if VTSS_ATOM12_B
+                      if (enable) {
+                          atom_patch_suspend(port_no, FALSE); // Make sure that 8051 patch is running
+                      } else {
+                          atom_patch_suspend(port_no, TRUE);  // Suspend 8051 Patch.
+                      }
+                      // Pass through
+              #endif
+                  case VTSS_PHY_FAMILY_TESLA:
+                  case VTSS_PHY_FAMILY_VIPER:
+                  case VTSS_PHY_FAMILY_ELISE:
+                  case VTSS_PHY_FAMILY_FERRET:
+                        
+                      // Enable/Disable all EEE
+                      //print_str("enable: "); print_dec(enable); 
+                      //print_str("port: "); 
+                      //print_dec(port_no);
+                     //print_cr_lf();   
+                      
+                      if (enable) {
+                          phy_write(port_no, 31, 0x2); // Change page
+                          phy_write_masked(port_no, 0x11, 0x8000, 0x8000);     // Enable EEE (EEE control, Adress 17E2, 
+             -bit 15)
+                          vtss_phy_mmd_reg_wr_masked(port_no, 7, 60, 6, 0x0006); // Enable advertisement
+              
+                          phy_write(port_no, 31, 0x2a30);                      // Switch to test-register page
+                          phy_write_masked(port_no, 25, 0, 1);                 // Clear EEE bit (bit 0)
+              
+                   //       phy_write(port_no, 31, 0x0);                         // Switch to std page
+                     //     phy_write_masked(port_no, 0, 0x0200, 0x0200);        // Restart auto negotiation
+                      } else {
+                          phy_write(port_no, 31, 0x2); // Change page
+                          phy_write_masked(port_no, 0x11, 0x0, 0x8000);        // Disable EEE (EEE control, Adress 17E2,
+             - bit 15)
+                          vtss_phy_mmd_reg_wr_masked(port_no, 7, 60, 0, 0x0006); // Disable advertisement
+                      }
+              
+                      phy_write(port_no, 31, 0x0);  // Go back to standard page.
+              
+                      // Only re-start auto-neg if in auto neg mode (Primary due to Bugzilla#7343,
+                      // which is also the reason to setting the AUTO_NED_ENA bit)
+                      ctrl = phy_read (port_no, 0);
+                      if (ctrl & 0x1000) {
+                          /* start autonegotiation by writing to register 0 */
+                          phy_write_masked(port_no, 0, 0x1200, 0x1200);
+              //            VTSS_RC(vtss_phy_wr_masked (port_no,  0, 0x1100, 0x1100));
+                      }
+                      break;
+                  default:
+                      //Error
+                      break;
+                  }
+              }
+              
+              /**
+               * Retrieve link partners EEE advertisement from register.
+               *
+               * @param port_no           The PHY port number starting from 0.
+               * @param advertisements    Advertisement bit mask.
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 19  
+
+               *                          Bit 0 = Link partner advertises 100BASE-T capability.
+               *                          Bit 1 = Link partner advertises 1000BASE-T capability.
+               */
+              vtss_rc vtss_phy_eee_link_partner_advertisements_get(
+                  const vtss_cport_no_t chip_port,
+                  char                  *advertisements)
+              {
+                  vtss_rc     rc = VTSS_RC_OK;
+                  uint        reg_val;
+              
+                  // Get the link partner advertisement.
+                  reg_val         = phy_mmd_rd(chip_port, 7, 61);
+              
+                  // Bit 0 is reserved. See data sheet.
+                  *advertisements = reg_val >> 1;
+              
+                  return VTSS_RC_OK;
+              }
+              #endif // TRANSIT_EEE
+1122          
+1123          #if TRANSIT_FAN_CONTROL || TRANSIT_THERMAL
+              /**
+               * Set the temperature monitor mode
+               */
+              void phy_init_temp_mode_regs(vtss_port_no_t port_no)
+              {
+                  phy_page_gp(port_no);
+                  phy_write_masked(port_no,0x1A, 0x0080, 0x0080); // Enable TMON1, Deassert Reset and enable background 
+             -moni
+                  phy_write_masked(port_no,0x1A, 0x00C0, 0x00C0); // Enable TMON1, Deassert Reset and enable background 
+             -moni
+                  phy_page_std(port_no);
+              }
+              
+              /**
+               * Read the temperature in degree C.
+               */
+              ushort phy_read_temp_reg (vtss_port_no_t port_no)
+              {
+                  phy_id_t    phy_id;
+                  ushort      reg;
+                  vtss_rc     rc;
+              
+                  phy_read_id(port_no, &phy_id);
+              
+                  switch (phy_id.family) {
+              #if VTSS_COBRA
+                  case VTSS_PHY_FAMILY_COBRA:
+                      break;
+              #endif
+              #if VTSS_ATOM12
+                      case VTSS_PHY_FAMILY_ATOM:
+                      case VTSS_PHY_FAMILY_LUTON26:
+                          rc = atom12_read_temp_reg(port_no, &reg);
+                          break;
+              #endif
+              #if VTSS_TESLA
+                      case VTSS_PHY_FAMILY_TESLA:
+                          rc = tesla_read_temp_reg(port_no, &reg);
+                          break;
+              #endif
+              #if VTSS_ELISE
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 20  
+
+                      case VTSS_PHY_FAMILY_ELISE:
+                          rc = elise_read_temp_reg(port_no, &reg);
+                          break;
+              #endif
+                      default:
+                          rc = VTSS_RC_ERROR;
+                          break;
+                  }
+              
+                  if (rc != VTSS_RC_OK)
+                      return 0xFF;
+              
+                  //135.3 degC - 0.71 degC * ADCOUT
+                  reg = (13530 - 71 * reg) / 100;
+              
+                  return reg;
+              }
+              #endif // TRANSIT_FAN_CONTROL || TRANSIT_THERMAL
+1181          
+1182          /*************** need to do some research and clean up *****************/
+1183          
+1184          #if 0   // Uncalled function
+              /* ************************************************************************ */
+              uchar init_atom_phase_loop_locked (port_no)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : 8512/8522 PHY PLL locked
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  ushort reg0, patch_en;
+                  uchar stat_vec[8];
+                  uchar  idx;
+              
+                  // ActivateRegSet 0 4 (micro page)
+                  phy_write (port_no, 31, 0x10);
+                  // hold 8051 in SW reset; enable address auto-incr. & PRAM clock
+                  // MicroMiiWriteBits 0 0 15 12 0x7
+                  reg0 = phy_read (port_no, 0) & 0x1ff;
+                  phy_write (port_no, 0, 0x7000 | reg0);
+                  // configure internal mem. bus for PRAM writes & set 1st byte
+                  // bus select: 2 => LCPLL/RCOMP
+                  // MicroMiiWrite 0 12 0x5002
+                  patch_en = phy_read (port_no, 12) & 0xf00;
+                  phy_write (port_no, 12, 0x5002 | patch_en); // preserve patch enable bits
+                  // starting address of MCB data structure
+                  // MicroMiiWrite 0 11 0x47c8
+                  phy_write (port_no, 11, 0x47c8);
+                  // zero out these fields (will be filled in by micro command)
+                  // num_slaves, cfg_size, stat_size, rw
+                  for (idx=1; idx<6; idx++) {
+                      // MicroMiiWrite 0 12 0x5000
+                      phy_write (port_no, 12, 0x5000 | patch_en);
+                  }
+                  // MicroMiiWrite 0 12 0x5001
+                  phy_write (port_no, 12, 0x5001 | patch_en); // set address vector
+                  // zero out these fields (will be filled in by micro command)
+                  // addr_vec buff, cfg_vec, stat_vec
+                  for (idx=7; idx<56; idx++) {
+                      // MicroMiiWrite 0 12 0x5000
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 21  
+
+                      phy_write (port_no, 12, 0x5000 | patch_en);
+                  }
+              
+                  // disable internal mem. bus writes
+                  // MicroMiiWriteBits 0 12 15 12 0x0
+                  phy_write (port_no, 12, patch_en);
+              
+                  // disable address auto-incr. & restore PRAM clock gating
+                  // MicroMiiWriteBits 0 0 13 12 0x0
+                  phy_write (port_no, 0, 0x4000 | reg0);
+                  // release 8051 from SW reset
+                  // MicroMiiWriteBits 0 0 15 15 0x1
+                  phy_write (port_no, 0, 0xc000 | reg0);
+              
+                  // issue micro command to perform MCB read to user specified bus
+                  // MicroMiiWrite 0 18 0x8080
+                  phy_write (port_no, 18, 0x8080);
+              
+                  // wait for micro to complete command
+                  while (phy_read (port_no, 18) & 0x8000);
+              
+                  // enable address auto-incr. & PRAM clock
+                  // You don't absolutely need to put the micro in SW reset here (clearing bit 15),
+                  // but it wouldn't hurt.  However, I didn't in my experiments.
+                  // Doing so *might* clear up some random flaky behavior in the PRAM read back
+                  // due to micro interference.
+                  // MicroMiiWriteBits 0 0 13 12 0x3
+                  phy_write (port_no, 0, 0xf000 | reg0);
+              
+                  // configure internal mem. bus for PRAM reads
+                  // MicroMiiWriteBits 0 12 15 12 0xc
+                  phy_write (port_no, 12, 0xc000 | patch_en);
+              
+                  // PRAM starting address for stat_vec
+                  // you *could* set to 0x47c8 and read out the whole data structure if you *really* wanted to
+                  // MicroMiiWrite 0 11 0x47f8
+                  phy_write (port_no, 11, 0x47f8);
+              
+                  for (idx=0; idx<8; idx++) {
+                      // MicroMiiRead 0 12
+                      stat_vec[idx] = phy_read (port_no, 12) & 0xff;
+                  }
+                  // You care about:
+                  // stat_vec[5].5 = pll5g_status0.lock_status (must be 1)
+                  // stat_vec[4].0 = pll5g_status1.fsm_lock (must be 1)
+              
+              
+                  // disable internal mem. bus reads
+                  // MicroMiiWriteBits 0 12 15 12 0x0
+                  phy_write(port_no, 12, patch_en);
+                  // disable address auto-incr. & restore PRAM clock gating
+                  // MicroMiiWriteBits 0 0 13 12 0x0
+                  phy_write (port_no, 0, 0xc000 | reg0);
+              
+                  phy_write (port_no, 31, 0x0);
+              
+                  print_str("pll5g_status0 : ");
+                  print_hex_prefix();
+                  print_hex_w(stat_vec[5]);
+                  print_cr_lf();
+                  print_str("pll5g_status1 : ");
+                  print_hex_prefix();
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 22  
+
+                  print_hex_w(stat_vec[4]);
+                  print_cr_lf();
+              
+                  return test_bit_8(5, &stat_vec[5]) && test_bit_8(0, &stat_vec[4]);
+              }
+              
+              ushort phy_mac_if_recv_err_cntr (vtss_port_no_t port_no) {
+                  ushort tx_pktcntr, tx_pktcntr_active, tx_crcerrcntr;
+              
+                  phy_write(port_no, 31, 0x10 );
+                  phy_write(port_no, 18, 0x8014 | ((ushort) port_no) << 8 ); // Suspend micro polling of PHY to enable t
+             -oken-ring access
+                  phy_write(port_no, 31, 0x52b5 );
+                  phy_write(port_no, 16, 0xbf88 );
+                  tx_pktcntr = phy_read(port_no, 17 );
+                  tx_pktcntr_active = tx_pktcntr & 1;
+                  tx_crcerrcntr = phy_read(port_no, 18 ) << 1 | ((tx_pktcntr >> 15) & 1);
+                  tx_pktcntr = (tx_pktcntr >> 1) & 0x3fff;
+                  phy_write(port_no, 31, 0x10 );
+                  phy_write(port_no, 18, 0x8004 | ((ushort) port_no) << 8 ); // Resume micro polling of PHY after  token
+             --ring access
+                  phy_write(port_no, 31, 0 );
+              
+                  print_str("tx cntr flag :");
+                  print_dec(tx_pktcntr_active);
+                  print_str(", tx cntr :");
+                  print_dec(tx_pktcntr);
+                  print_str(", tx err cntr :");
+                  print_dec(tx_crcerrcntr);
+                  print_cr_lf();
+              
+                  return tx_crcerrcntr;
+              }
+              #endif  // Uncalled function
+1319          
+1320          #if TRANSIT_EEE
+              #if VTSS_ATOM12_A
+              /**
+               * Allows VGA and/or ADC to power down for EEE.
+               *
+               * @param vga_adc_pwr   Configure mode.
+               *                      00: power down neither
+               *                      01: power down ADCs only
+               *                      10: power down VGAs only
+               *                      11: power down both
+               *
+               * @param port_no       The port to config.
+               *
+               * @note To be removed for Luton26 Rev B.
+               *
+               * @see vga_adc_debug() in API
+               */
+              void vga_adc_debug(vtss_port_no_t   port_no,
+                                 phy_atom12_en_t  vga_adc_pwr)
+              {
+                  /*
+                   * turn off micro VGA patch temporarily to allow token-ring access
+                   */
+              
+                  phy_page_gp(port_no);           // switch to micro page (glabal to all 12 PHYs)
+                  phy_write(port_no, 18, 0x9024);
+              
+C51 COMPILER V9.60.0.0   PHYDRV                                                            11/30/2021 16:22:24 PAGE 23  
+
+                  phy_page_tr(port_no);           // Switch to token-ring register page
+                  phy_write(port_no, 18, 0x0001);
+                  phy_write(port_no, 17, 0x40b9 | (vga_adc_pwr << 1));
+                  phy_write(port_no, 16, 0x8fda); // for 100
+                  phy_write(port_no, 18, 0x0000);
+                  phy_write(port_no, 17, 0x0159 | (vga_adc_pwr << 1));
+                  phy_write(port_no, 16, 0x8fd6); // for 1000
+              
+                  /*
+                   * turn micro VGA patch back on to allow correct PHY start-up
+                   */
+              
+                  phy_page_gp(port_no);           // switch to micro page (glabal to all 12 PHYs)
+                  phy_write(port_no, 18, 0x9004);
+              
+                  phy_page_std(port_no);          // switch to standard page
+              }
+              #endif //VTSS_ATOM12_A
+              #endif // TRANSIT_EEE
+1366          
+1367          /****************************************************************************/
+1368          /*                                                                          */
+1369          /*  End of file.                                                            */
+1370          /*                                                                          */
+1371          /****************************************************************************/
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    941    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----      29
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----      30
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

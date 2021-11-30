@@ -1,0 +1,181 @@
+C51 COMPILER V9.60.0.0   TXT                                                               11/30/2021 16:22:23 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE TXT
+OBJECT MODULE PLACED IN ..\obj\txt.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\cli\txt.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbond;.
+                    -.\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_api\b
+                    -ase;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src\ee
+                    -e\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PRINT
+                    -(..\lst\txt.lst) TABS(2) OBJECT(..\obj\txt.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          
+  27          #ifndef NO_DEBUG_IF
+  28          
+  29          #include <string.h>
+  30          
+  31          #include "txt.h"
+  32          #include "print.h"
+  33          #include "misc1.h"
+  34          
+  35          #include "txt_moredef.h"
+  36          
+  37          
+  38          #if 0 // Uncalled function
+              char code txt_01 [] = "Invalid command\r\n";
+              
+              #ifndef UNMANAGED_REDUCED_DEBUG_IF
+              char code txt_02 [] = "Chip ID: ";
+              char code txt_03 [] = "Port SMAC              MIIM PHY\r\n";
+              
+              char code txt_05 [] = "Port ";
+              char code txt_06 [] = ", MIIM ";
+              char code txt_07 [] = ", PHY ";
+              #endif // UNMANAGED_REDUCED_DEBUG_IF
+              
+              #endif // Uncalled function
+  51          
+C51 COMPILER V9.60.0.0   TXT                                                               11/30/2021 16:22:23 PAGE 2   
+
+  52          #if LOOPBACK_TEST
+              char code txt_08 [] = "Internal loopback on PHYs:\r\n";
+              char code txt_09 [] = "External loopback on PHYs:\r\n";
+              
+              char code txt_11 [] = "\r\n    Port  @10     @100    @1000";
+              char code txt_12 [] = "Ok      ";
+              char code txt_13 [] = "Error ";
+              char code txt_14 [] = "\r\nTest completed\r\n";
+              #endif // LOOPBACK_TEST
+  61          
+  62          #endif // NO_DEBUG_IF
+  63          
+  64          
+  65          /*****************************************************************************
+  66           *
+  67           *
+  68           * Interface functions
+  69           *
+  70           *
+  71           *
+  72           ****************************************************************************/
+  73          
+  74          
+  75          #if UNMANAGED_LLDP_DEBUG_IF || UNMANAGED_PORT_STATISTICS_IF
+  76          uchar txt_len (std_txt_t txt_no)
+  77          {
+  78   1          if (txt_no != 0 && txt_no < ARRAY_LENGTH(std_txt_tab)) {
+  79   2              return strlen(std_txt_tab[txt_no].str_ptr);
+  80   2          }
+  81   1      
+  82   1          return 0;
+  83   1      }
+  84          #endif
+  85          
+  86          #if UNMANAGED_LLDP_DEBUG_IF || UNMANAGED_PORT_STATISTICS_IF
+  87          void print_txt (std_txt_t txt_no)
+  88          {
+  89   1          if (txt_no < ARRAY_LENGTH(std_txt_tab) && std_txt_tab[txt_no].str_ptr) {
+  90   2              print_str(std_txt_tab[txt_no].str_ptr);
+  91   2          } else {
+  92   2              print_str("%% Error: Wrong parameter when calling print_txt(), txt_no=0x");
+  93   2              print_hex_b(txt_no);
+  94   2              print_cr_lf();
+  95   2          }
+  96   1      }
+  97          
+  98          void print_txt_left (std_txt_t txt_no, uchar width)
+  99          {
+ 100   1          uchar s_len;
+ 101   1      
+ 102   1          s_len = txt_len(txt_no);
+ 103   1          print_txt(txt_no);
+ 104   1          if (width > s_len) {
+ 105   2              print_spaces(width - s_len);
+ 106   2          }
+ 107   1      }
+ 108          #endif // UNMANAGED_LLDP_DEBUG_IF || UNMANAGED_PORT_STATISTICS_IF
+ 109          
+ 110          
+ 111          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+ 112          uchar cmp_cmd_txt (cmd_txt_t cmd_txt_no, char xdata *s1)
+ 113          {
+C51 COMPILER V9.60.0.0   TXT                                                               11/30/2021 16:22:23 PAGE 3   
+
+ 114   1          uchar count;
+ 115   1          uchar ch1;
+ 116   1          uchar ch2;
+ 117   1          char code *s2;
+ 118   1          uchar prev_ch;
+ 119   1      
+ 120   1          prev_ch = 0;
+ 121   1          count = 0;
+ 122   1          s2 = cmd_txt_tab[cmd_txt_no].str_ptr;
+ 123   1          for (;;) {
+ 124   2              ch2 = conv_to_upper_case(*s2++);
+ 125   2              if (ch2 == 0) {
+ 126   3                  return count;
+ 127   3              }
+ 128   2      
+ 129   2              ch1 = conv_to_upper_case(*s1++);
+ 130   2              if (ch1 != ch2) {
+ 131   3                  if (count >= cmd_txt_tab[cmd_txt_no].min_match) {
+ 132   4                      if (prev_ch == ' ') {
+ 133   5                          count--;
+ 134   5                      }
+ 135   4                      return count;
+ 136   4                  }
+ 137   3                  else {
+ 138   4                      return 0;
+ 139   4                  }
+ 140   3              }
+ 141   2              else {
+ 142   3                  prev_ch = ch1;
+ 143   3              }
+ 144   2             // Increment count and make sure that we don't run forever.
+ 145   2             if (count++ > 254) {
+ 146   3                 return 0;
+ 147   3              }
+ 148   2          }
+ 149   1      }
+ 150          #endif // TRANSIT_UNMANAGED_SYS_MAC_CONF
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    322    ----
+   CONSTANT SIZE    =     62    ----
+   XDATA SIZE       =   ----      13
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

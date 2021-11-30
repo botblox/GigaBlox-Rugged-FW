@@ -1,0 +1,938 @@
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE SPIFLASH
+OBJECT MODULE PLACED IN ..\obj\spiflash.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\config\spiflash.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\w
+                    -inbond;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vt
+                    -ss_api\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;.
+                    -.\src\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTE
+                    -ND PRINT(..\lst\spiflash.lst) TABS(2) OBJECT(..\obj\spiflash.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include <absacc.h>
+  26          #include <stddef.h>
+  27          #include <string.h>
+  28          
+  29          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  30          #include "vtss_api_base_regs.h"
+  31          #include "h2io.h"
+  32          #include "misc3.h"
+  33          #include "uartdrv.h"
+  34          #include "spiflash.h"
+  35          #include "timer.h"
+  36          #include "print.h"
+  37          #include "h2txrx.h" /* using uchar rx_packet[] */
+  38          #include "timer.h"
+  39          #include "h2mactab.h"
+  40          
+  41          #if defined(NPI_CHIP_PORT) && TRANSIT_UNMANAGED_MAC_OPER_SET
+  42          #include "h2mactab.h"
+  43          #endif // NPI_CHIP_PORT && TRANSIT_UNMANAGED_MAC_OPER_SET
+  44          
+  45          /*****************************************************************************
+  46           *
+  47           *
+  48           * SPI pins
+  49           *
+  50           *
+  51           *
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 2   
+
+  52           ****************************************************************************/
+  53          #define SI_CLK 12
+  54          #define SI_CS   5
+  55          #define SI_DO  10
+  56          #define SI_DI   0
+  57          #if defined(VTSS_ARCH_OCELOT)
+  58          #define SI_CLK_MSK VTSS_M_ICPU_CFG_SPI_MST_SW_MODE_SW_SPI_SCK
+  59          #define SI_DO_MSK  VTSS_M_ICPU_CFG_SPI_MST_SW_MODE_SW_SPI_SDO
+  60          #define SI_DI_MSK  VTSS_M_ICPU_CFG_SPI_MST_SW_MODE_SW_SPI_SDI
+  61          #elif defined(VTSS_ARCH_LUTON26)
+              #define SI_CLK_MSK VTSS_F_ICPU_CFG_SPI_MST_SW_MODE_SW_SPI_SCK
+              #define SI_DO_MSK  VTSS_F_ICPU_CFG_SPI_MST_SW_MODE_SW_SPI_SDO
+              #define SI_DI_MSK  VTSS_F_ICPU_CFG_SPI_MST_SW_MODE_SW_SPI_SDI
+              #endif
+  66          #define SI_CS_MSK  VTSS_F_ICPU_CFG_SPI_MST_SW_MODE_SW_SPI_CS(0x01)
+  67          
+  68          /*****************************************************************************
+  69           *
+  70           *
+  71           * Defines
+  72           *
+  73           *
+  74           *
+  75           ****************************************************************************/
+  76          #define FLASH_CFG_SIGNATURE     0x77    // Switch system configuration signature
+  77          #define FLASH_RT_MAGIC          0x88    // Switch system run-time code magic no
+  78          
+  79          /* Flash instruction set */
+  80          #define FLASH_WREN              0x06        // Write Enable
+  81          #define FLASH_WRDI              0x04        // Write Disable
+  82          #define FLASH_RDID              0x9F        // Read Identification
+  83          #define FLASH_RDSR              0x05        // Read Status Register
+  84          #define FLASH_WRSR              0x01        // Write Status Register
+  85          #define FLASH_READ              0x03        // Read Data Bytes
+  86          #define FLASH_FAST_READ         0x0B        // Read Data Bytes at Higher Speed
+  87          #define FLASH_PP                0x02        // Page Program
+  88          
+  89          #define FLASH_PP_MAX_TIMEOUT    2           // We set 20ms here but 7 ms actually
+  90          #define FLASH_SE_MAX_TIMEOUT    600         // 6 seconds
+  91          #define FLASH_BE_MAX_TIMEOUT    25000       // 250 seconds
+  92          
+  93          //Read status register
+  94          #define FLASH_STATUS_WIP        0x1         //SPI read status register WIP bit
+  95          
+  96          // Page size
+  97          #define FLASH_PAGE_SIZE         256         // Flash page size
+  98          
+  99          //Voltage level
+ 100          #define FLASH_VOLTAGE_LOW       0           //Driving voltage low
+ 101          #define FLASH_VOLTAGE_HIGH      1           //Driving voltage high
+ 102          
+ 103          // Debug
+ 104          #define FLASH_DEBUG             0
+ 105          
+ 106          
+ 107          /*
+ 108           Flash layout
+ 109           Name               Starting address            Size
+ 110          =============================================================
+ 111           Boot Code          0                           0x10000 (64K bytes)
+ 112           CFG                Dynamic                     0x4000  (16K bytes)
+ 113           RT0                Dynamic                     0xC000  (48K bytes)
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 3   
+
+ 114           RT1                Dynamic                     0xC000  (48K bytes)
+ 115          */
+ 116          
+ 117          // Image code size
+ 118          #define FLASH_IMG_SIZE_BL   0x10000UL   // Boot loader size (64K bytes)
+ 119          #define FLASH_IMG_SIZE_CFG  0x4000UL    // configuration data size (16K bytes)
+ 120          #define FLASH_IMG_SIZE_RT   0xC000UL    // Runtime code size (48 bytes)
+ 121          
+ 122          // Image start address
+ 123          #define FLASH_IMG_START_ADDR_BL         0x0
+ 124          
+ 125          
+ 126          /*****************************************************************************
+ 127           *
+ 128           *
+ 129           * Typedefs and enums
+ 130           *
+ 131           *
+ 132           *
+ 133           ****************************************************************************/
+ 134          struct config_contents {
+ 135              uchar       rt_magic;       // run-time valid bit
+ 136              uchar       rt_idx;         // Runtime code index
+ 137              uchar       signature;      // Configuration signature
+ 138              mac_addr_t  sys_mac;        // System MAC address
+ 139          };
+ 140          
+ 141          struct flash_info {
+ 142              ulong   ss;             // Sector Size
+ 143              uchar   se;             // Sector Erase
+ 144              uchar   be;             // Bulk Erase
+ 145              uchar   is_single_img;  // Is Only Single Image Supported?
+ 146              uchar   zs_cnt;         // Zero Sector Count
+ 147              ushort  zs_mapping[8];  // Zero Sector Mapping
+ 148              ulong   sa_cfg;         // Start Address of Configuration
+ 149              ulong   sa_rt0;         // Start Address of Runtime Code 0
+ 150              ulong   sa_rt1;         // Start Address of Runtime Code 1
+ 151          };
+ 152          
+ 153          mac_addr_t xdata mac_addr_0  = {0x00,0x00,0x00,0x00,0x00,0x00};
+ 154          mac_addr_t xdata mac_addr_ff = {0xff,0xff,0xff,0xff,0xff,0xff};
+ 155          mac_addr_t spiflash_mac_addr = {0, 0x01, 0xc1, 0, 0, 0};
+ 156          
+ 157          
+ 158          /*****************************************************************************
+ 159           *
+ 160           *
+ 161           * Local data
+ 162           *
+ 163           *
+ 164           *
+ 165           ****************************************************************************/
+ 166          /* Configuration shadow in RAM */
+ 167          static xdata struct config_contents config_shadow;
+ 168          static ulong data simaster_shadow = 0x00;
+ 169          static xdata struct flash_info cur_flash_info;
+ 170          
+ 171          
+ 172          /*****************************************************************************
+ 173           *
+ 174           *
+ 175           * Local functions
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 4   
+
+ 176           *
+ 177           *
+ 178           *
+ 179           ****************************************************************************/
+ 180          #ifndef NO_DEBUG_IF
+ 181          #if TRANSIT_UNMANAGED_SWUP
+              static void write_simaster (ulong value) small {
+                  simaster_shadow = value;
+                  H2_WRITE(VTSS_ICPU_CFG_SPI_MST_SW_MODE, simaster_shadow);
+              }
+              
+              static void spi_ctrl_enter (void) small {
+                  write_simaster(0x2A22);
+              }
+              
+              static void spi_ctrl_exit (void) small {
+                  write_simaster(0x0000);
+              }
+              
+              static void set_cs (char voltage) small {
+                  if (voltage == FLASH_VOLTAGE_LOW) {
+                      write_simaster(simaster_shadow | SI_CS_MSK);
+                  } else {
+                      write_simaster(simaster_shadow & (~SI_CS_MSK));
+                  }
+              }
+              
+              static void trigger_clock (void) small {
+                  write_simaster(simaster_shadow | SI_CLK_MSK);       // driving high
+                  write_simaster(simaster_shadow & (~SI_CLK_MSK));    // driving low
+              }
+              
+              static uchar get_input_byte (void) small {
+                  ulong value;
+              
+                  H2_READ(VTSS_ICPU_CFG_SPI_MST_SW_MODE, value);
+              
+                  return ((value & SI_DI_MSK) != 0);
+              }
+              
+              static void set_output_bit (char bit_value) small {
+                  if (bit_value) {
+                      write_simaster(simaster_shadow | SI_DO_MSK);
+                  } else {
+                      write_simaster(simaster_shadow & (~SI_DO_MSK));
+                  }
+              }
+              
+              static void output_byte (uchar byte_val) small {
+                  uchar i;
+              
+                  for (i = 0; i < 8; i++) {
+                      set_output_bit(byte_val & 0x80);
+                      byte_val <<= 1;
+                      trigger_clock();
+                  }
+              }
+              
+              static uchar input_byte (void) small {
+                  uchar i, byte_val;
+              
+                  byte_val = 0;
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 5   
+
+                  for (i = 0; i < 8; i++) {
+                      byte_val <<= 1;
+                      byte_val |= get_input_byte();
+                      trigger_clock();
+                  }
+              
+                  return byte_val;
+              }
+              
+              static void flash_enable_write (void) small {
+                  set_cs(FLASH_VOLTAGE_LOW);
+                  output_byte(FLASH_WREN);
+                  set_cs(FLASH_VOLTAGE_HIGH);
+              }
+              
+              static uchar flash_read_status (void) small {
+                  uchar status;
+              
+                  set_cs(FLASH_VOLTAGE_LOW);
+                  output_byte(FLASH_RDSR);
+                  status = input_byte();
+                  set_cs(FLASH_VOLTAGE_HIGH);
+                  return status;
+              }
+              
+              static uchar flash_wait_wip (ulong timeout_value) small {
+                  ushort status, sec = 0, ms = 0;
+              
+                  if (timeout > MSEC_1000) {
+                      sec = timeout_value / MSEC_1000 - 1;
+                      ms  = timeout_value % MSEC_1000;
+                      start_timer(MSEC_1000);
+                  } else {
+                      start_timer(timeout_value);
+                  }
+              
+                  do {
+                      status = flash_read_status() & FLASH_STATUS_WIP;
+                      if (timeout()) {
+                          if (sec != 0) {
+                              sec--;
+                              start_timer(MSEC_1000);
+                          } else if (ms != 0) {
+                              ms = 0;
+                              start_timer(ms);
+                          } else {
+              #if FLASH_DEBUG
+                              print_str("WIP timout");
+                              print_cr_lf();
+              #endif
+                              return 1;
+                          }
+                      }
+                  } while(status);
+              
+                  return 0;
+              }
+              
+              #if 0
+              static uchar flash_erase_bulk (void) small {
+                  uchar status;
+              
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 6   
+
+                  spi_ctrl_enter();
+                  flash_enable_write();
+                  set_cs(FLASH_VOLTAGE_LOW);
+                  output_byte(cur_flash_info.be);
+                  set_cs(FLASH_VOLTAGE_HIGH);
+                  status = flash_wait_wip(FLASH_BE_MAX_TIMEOUT);
+                  spi_ctrl_exit();
+              
+                  return status;
+              }
+              #endif
+              
+              static uchar flash_erase_sector (ulong addr) small {
+                  uchar sector_cnt = 1, i , status;
+              
+                  spi_ctrl_enter();
+                  if (addr == 0) {
+                      sector_cnt = cur_flash_info.zs_cnt;
+                  }
+                  for (i = 0; i < sector_cnt; i++) {
+                      flash_enable_write();
+                      set_cs(FLASH_VOLTAGE_LOW);
+                      output_byte(cur_flash_info.se);
+                      output_byte(addr >> 16 & 0xFF);
+                      output_byte(addr >> 8 & 0xFF);
+                      output_byte(addr & 0xFF);
+                      set_cs(FLASH_VOLTAGE_HIGH);
+                      status = flash_wait_wip(FLASH_SE_MAX_TIMEOUT);
+                      addr += cur_flash_info.zs_mapping[i];
+                  }
+                  spi_ctrl_exit();
+              
+                  return status;
+              }
+              
+              static uchar flash_page_program (ulong addr, uchar *data_ptr, ulong len)
+              {
+                  ulong cnt, i;
+              
+                  while (len > 0) {
+                      if (len > FLASH_PAGE_SIZE) {
+                          cnt = FLASH_PAGE_SIZE;
+                          len -= FLASH_PAGE_SIZE;
+                      } else {
+                          cnt = len;
+                          len = 0;
+                      }
+              
+                      spi_ctrl_enter();
+                      flash_enable_write();
+                      set_cs(FLASH_VOLTAGE_LOW);
+                      output_byte(FLASH_PP);
+                      output_byte(addr >> 16 & 0xFF);
+                      output_byte(addr >> 8 & 0xFF);
+                      output_byte(addr & 0xFF);
+                      for (i = 0; i < cnt; i++) {
+                          output_byte(*data_ptr++);
+                      }
+                      set_cs(FLASH_VOLTAGE_HIGH);
+                      if (flash_wait_wip(FLASH_PP_MAX_TIMEOUT)) {
+                          spi_ctrl_exit();
+                          return 1;
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 7   
+
+                      }
+                      spi_ctrl_exit();
+              
+                      addr += FLASH_PAGE_SIZE;
+                  }
+              
+                  return 0;
+              }
+              
+              #if FLASH_SUPPORT_IMAGE_CHECKSUM
+              static uchar flash_checksum (ulong start_addr, ulong len)
+              {
+                  uchar csum;
+                  ulong i;
+              
+                  spi_ctrl_enter();
+                  set_cs(FLASH_VOLTAGE_LOW);
+                  output_byte(FLASH_FAST_READ);
+                  output_byte(start_addr >> 16 & 0xFF);
+                  output_byte(start_addr >> 8 & 0xFF);
+                  output_byte(start_addr & 0xFF);
+                  output_byte(0); // Dummy byte
+                  for (csum = 0, i = 0; i < len; i++) {
+                      csum += input_byte();
+                  }
+                  set_cs(FLASH_VOLTAGE_HIGH);
+                  spi_ctrl_exit();
+              
+                  return csum;
+              }
+              #endif /* FLASH_SUPPORT_IMAGE_CHECKSUM */
+              
+              static uchar flash_change_rt_idx (void)
+              {
+                  config_shadow.signature = FLASH_CFG_SIGNATURE;
+                  config_shadow.rt_idx = config_shadow.rt_idx?0:1;
+              
+                  flash_erase_sector(cur_flash_info.sa_cfg);
+                  return flash_page_program(cur_flash_info.sa_cfg, (uchar *) &config_shadow, sizeof(config_shadow));
+              }
+              
+              /* ************************************************************************ */
+              uchar flash_erase_code (uchar img_type)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Erase the sectors/block for code
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  ulong i, img_size, addr;
+              
+                  switch (img_type) {
+                  case FLASH_IMG_TYPE_BL:
+                      img_size = FLASH_IMG_SIZE_BL;
+                      addr     = FLASH_IMG_START_ADDR_BL;
+                      break;
+                  case FLASH_IMG_TYPE_RT:
+                      img_size = FLASH_IMG_SIZE_RT;
+                      if (cur_flash_info.is_single_img) {
+                          addr = FLASH_IMG_START_ADDR_BL;
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 8   
+
+                      } else {
+                          if (config_shadow.rt_idx == 1) {
+                              addr = cur_flash_info.sa_rt0;
+                          } else {
+                              addr = cur_flash_info.sa_rt1;
+                          }
+                      }
+                      break;
+                  default:
+                      return 1;
+                  }
+              
+                  /* Erase flash sectors */
+                  for (i = 0; i < ((img_size < cur_flash_info.ss ? cur_flash_info.ss : img_size) / cur_flash_info.ss); i
+             -++) {
+                      if (flash_erase_sector(addr + i * cur_flash_info.ss)) {
+                          return 1;
+                      }
+                  }
+              
+                  return 0;
+              }
+              
+              /* ************************************************************************ */
+              uchar flash_download_image (uchar img_type, ulong len, uchar csum)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Update Flash with image being loaded from serial port
+               * Remarks     : Always load from address 0 and flash must have been erased
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  ulong img_size, addr, i, cnt;
+                  ulong timeout_cnt = 5; // 5 seconds
+              #if FLASH_SUPPORT_IMAGE_CHECKSUM
+                  ulong img_addr, img_len;
+              #endif
+              
+                  if (len == 0) {
+                      return 1;
+                  }
+              
+                  switch (img_type) {
+                  case FLASH_IMG_TYPE_BL:
+                      if (len > FLASH_IMG_SIZE_BL) {
+                          return 1;
+                      }
+                      img_size = FLASH_IMG_SIZE_BL;
+                      addr     = FLASH_IMG_START_ADDR_BL;
+                      break;
+                  case FLASH_IMG_TYPE_RT:
+                      if (len > FLASH_IMG_SIZE_RT) {
+                          return 1;
+                      }
+                      img_size = FLASH_IMG_SIZE_RT;
+                      if (cur_flash_info.is_single_img) {
+                          addr = FLASH_IMG_START_ADDR_BL;
+                      } else {
+                          if (config_shadow.rt_idx == 1) {
+                              addr = cur_flash_info.sa_rt0;
+                          } else {
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 9   
+
+                              addr = cur_flash_info.sa_rt1;
+                          }
+                      }
+                      break;
+                  default:
+                      return 1;
+                  }
+              
+              #if FLASH_SUPPORT_IMAGE_CHECKSUM
+                  img_addr = addr;
+                  img_len = len;
+              #endif
+              
+                  /* Erase flash sectors */
+                  /* We should call flash_erase_code() first.
+                  for (i = 0; i < ((img_size < cur_flash_info.ss ? cur_flash_info.ss : img_size) / cur_flash_info.ss); i
+             -++) {
+                      if (flash_erase_sector(addr + i * cur_flash_info.ss)) {
+                          retrun 1;
+                      }
+                  }
+                  */
+              
+                  /* Program image */
+                  while (len > 0) {
+                      if (len > FLASH_PAGE_SIZE) {
+                          cnt = FLASH_PAGE_SIZE;
+                          len -= FLASH_PAGE_SIZE;
+                      } else {
+                          cnt = len;
+                          len = 0;
+                      }
+              
+                      spi_ctrl_enter();
+                      flash_enable_write();
+                      set_cs(FLASH_VOLTAGE_LOW);
+                      output_byte(FLASH_PP);
+                      output_byte(addr >> 16 & 0xFF);
+                      output_byte(addr >> 8 & 0xFF);
+                      output_byte(addr & 0xFF);
+                      for (i = 0; i < cnt; i++) {
+                          start_timer(MSEC_1000);
+                          while (! uart_byte_ready()) {
+                              if (timeout()) {
+                                  if (timeout_cnt != 0) {
+                                      timeout_cnt--;
+                                      start_timer(MSEC_1000);
+                                  } else {
+                                      set_cs(FLASH_VOLTAGE_HIGH);
+                                      spi_ctrl_exit();
+              #if FLASH_DEBUG
+                                      print_str("UART timout");
+                                      print_cr_lf();
+              #endif
+                                      return -1;
+                                  }
+                              }
+                          }
+                          output_byte(uart_get_byte());
+                      }
+                      set_cs(FLASH_VOLTAGE_HIGH);
+                      if (flash_wait_wip(FLASH_PP_MAX_TIMEOUT)) {
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 10  
+
+                          spi_ctrl_exit();
+                          return 1;
+                      }
+                      spi_ctrl_exit();
+              
+                      addr += FLASH_PAGE_SIZE;
+                  }
+              
+              #if FLASH_SUPPORT_IMAGE_CHECKSUM
+                  /* Check image checksum */
+                  if (csum != flash_checksum(img_addr, img_len)) {
+              #if FLASH_DEBUG
+                      print_str("csum = ");
+                      print_dec(csum);
+                      print_cr_lf();
+              #endif
+                      return 1;
+                  }
+              #else
+                  csum = 0;
+              #endif /* FLASH_SUPPORT_IMAGE_CHECKSUM */
+              
+                  /* Change runtime code index */
+                  if (!cur_flash_info.is_single_img && img_type == FLASH_IMG_TYPE_RT) {
+                      return flash_change_rt_idx();
+                  }
+              
+                  return 0;
+              }
+              
+              #ifndef UNMANAGED_REDUCED_DEBUG_IF
+              /* ************************************************************************ */
+              void flash_read_bytes (ulong start_addr, ulong len)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Read len bytes from flash starting from start_addr and print
+               * Remarks     : them to UART
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  ulong i;
+              
+                  if (len == 0) {
+                      return;
+                  }
+              
+                  print_cr_lf();
+                  spi_ctrl_enter();
+                  set_cs(FLASH_VOLTAGE_LOW);
+                  output_byte(FLASH_FAST_READ);
+                  output_byte(start_addr >> 16 & 0xFF);
+                  output_byte(start_addr >> 8 & 0xFF);
+                  output_byte(start_addr & 0xFF);
+                  output_byte(0); // Dummy byte
+                  for (i = 0; i < len; i++) {
+                      print_hex_b(input_byte());
+                      print_spaces(1);
+                      if ((i & 0x0f) == 0x0f) {
+                          print_cr_lf(); /* CR/LF every 16 byte */
+                      }
+                  }
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 11  
+
+                  set_cs(FLASH_VOLTAGE_HIGH);
+                  spi_ctrl_exit();
+                  print_cr_lf();
+              }
+              #endif /* UNMANAGED_REDUCED_DEBUG_IF */
+              
+              /*****************************************************************************
+               *
+               *
+               * Help functions
+               *
+               *
+               *
+               ****************************************************************************/
+              
+              /* ************************************************************************ */
+              static ulong flash_read_id (void) small
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Read flash identification
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  ulong id;
+              
+                  spi_ctrl_enter();
+                  set_cs(FLASH_VOLTAGE_LOW);
+                  output_byte(FLASH_RDID);
+                  id = (ulong) input_byte() << 16;
+                  if (id == 0x7F0000) { // Specifical for A25L80, the flash ID is 4 byte
+                      id = id << 8;
+                      id |= (ulong) input_byte() << 16;
+                  }
+                  id |= ((ulong) input_byte() << 8);
+                  id |= input_byte();
+                  set_cs(FLASH_VOLTAGE_HIGH);
+                  spi_ctrl_exit();
+                  return id;
+              }
+              
+              /*
+               * Get flash information
+               *  return: 0 - success, 1 - fail
+               */
+              static int flash_info_get (struct flash_info *info)
+              {
+                  ulong flash_id;
+                  uchar is_unknown = 0;
+              
+                  memset(info, 0x0, sizeof(*info));
+                  flash_id = flash_read_id();
+                  switch (flash_id) {
+                  case 0x00C22010:    //MX25L512C
+                  case 0x00C22011:    //MX25L1005C
+                  case 0x001C3110:    //EN25F05
+                  case 0x00373010:    //A25L512
+                      info->ss            = 0x1000;   // Sector Size (4K Bytes)
+                      info->se            = 0x20;     // Sector Erase
+                      info->be            = 0xD8;     // Bulk Erase
+                      info->is_single_img = 1;        // Is Only Single Image Supported?
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 12  
+
+                      info->zs_cnt        = 1;        // Zero Sector Count
+                      break;
+                  case 0x00202011:    //M25P10A
+                      info->ss            = 0x8000;   // Sector Size (32K Bytes)
+                      info->se            = 0xD8;     // Sector Erase
+                      info->be            = 0xC7;     // Bulk Erase
+                      info->is_single_img = 1;        // Is Only Single Image Supported?
+                      info->zs_cnt        = 1;        // Zero Sector Count
+                      break;
+                  case 0x00C22014:    //MX25L8006E
+                  case 0x00C22018:    //MX25L12845E
+                  case 0x00202012:    //M25P20
+                  case 0x00202014:    //M25P80
+                      info->ss            = 0x10000;  // Sector Size (64K Bytes)
+                      info->se            = 0xD8;     // Sector Erase
+                      info->be            = 0xC7;     // Bulk Erase
+                      info->is_single_img = 0;        // Is Only Single Image Supported?
+                      info->zs_cnt        = 1;        // Zero Sector Count
+                      break;
+                  case 0x00202018:    //M25P128
+                      info->ss            = 0x40000;  // Sector Size (256K Bytes)
+                      info->se            = 0xD8;     // Sector Erase
+                      info->be            = 0xC7;     // Bulk Erase
+                      info->is_single_img = 0;        // Is Only Single Image Supported?
+                      info->zs_cnt        = 1;        // Zero Sector Count
+                      break;
+                  case 0x7F372014:    //A25L80
+                      info->ss            = 0x10000;  // Sector Size (64K Bytes)
+                      info->se            = 0xD8;     // Sector Erase
+                      info->be            = 0xC7;     // Bulk Erase
+                      info->is_single_img = 0;        // Is Only Single Image Supported?
+                      info->zs_cnt        = 5;        // Zero Sector Count
+              
+                      info->zs_mapping[0] = 0x1000;   // 0-0,  4K Bytes
+                      info->zs_mapping[1] = 0x1000;   // 0-1,  4K Bytes
+                      info->zs_mapping[2] = 0x2000;   // 0-2,  8K Bytes
+                      info->zs_mapping[3] = 0x4000;   // 0-3, 16K Bytes
+                      info->zs_mapping[4] = 0x8000;   // 0-4, 32K Bytes
+                      break;
+                  case 0x00C22015:    //MX25L1606E
+                      info->ss            = 0x1000;   // Sector Size (4K Bytes)
+                      info->se            = 0x20;     // Sector Erase
+                      info->be            = 0xD8;     // Bulk Erase
+                      info->is_single_img = 0;        // Is Only Single Image Supported?
+                      info->zs_cnt        = 1;        // Zero Sector Count
+                      break;
+                  default:
+                      print_str("Flash ID (0x");
+                      print_hex_dw(flash_id);
+                      print_str(") not supported");
+                      print_cr_lf();
+                      print_str("Assume 64K flash is used\r\n");
+                      info->ss            = 0x1000;   // Sector Size (4K Bytes)
+                      info->se            = 0x20;     // Sector Erase
+                      info->be            = 0xD8;     // Bulk Erase
+                      info->is_single_img = 1;        // Is Only Single Image Supported?
+                      info->zs_cnt        = 1;        // Zero Sector Count
+                      is_unknown          = 1;
+              
+                  }
+              
+                  if(is_unknown ||
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 13  
+
+                      (flash_id == 0x00C22010) ||    //MX25L512C
+                      (flash_id == 0x00C22011) ||    //MX25L1005C
+                      (flash_id == 0x001C3110) ||
+                      (flash_id == 0x00373010)) {
+                      info->sa_cfg  = 0xC000U;
+                  } else {
+                      info->sa_cfg    = info->ss >= FLASH_IMG_SIZE_BL ? info->ss : FLASH_IMG_SIZE_BL;                 //
+             - Start Address of Configuration
+                  }
+              
+              #if defined(VTSS_ARCH_OCELOT)
+                info->ss = 0x1000;
+                info->se = 0x20;
+                info->be = 0xd8;
+                info->zs_cnt = 1;
+                info->sa_cfg = 0x1fff000;
+              #endif
+              
+              
+                  info->sa_rt0    = info->sa_cfg + (info->ss >= FLASH_IMG_SIZE_CFG ? info->ss : FLASH_IMG_SIZE_CFG);  //
+             - Start Address of Runtime Code 0
+                  info->sa_rt1    = info->sa_rt0 + (info->ss >= FLASH_IMG_SIZE_RT ? info->ss : FLASH_IMG_SIZE_RT);    //
+             - Start Address of Runtime Code 1
+              
+              #if FLASH_DEBUG
+                  print_str("Flash ID = 0x");
+                  print_hex_dw(flash_id);
+                  print_cr_lf();
+              #endif
+                  return 0;
+              }
+              
+              /*
+               * Flash initialization
+               *  return: 0 - success, 1 - fail
+               */
+              int flash_init (void)
+              {
+                  return flash_info_get(&cur_flash_info);
+              }
+              #endif /* TRANSIT_UNMANAGED_SWUP */
+ 770          #endif /* NO_DEBUG_IF */
+ 771          
+ 772          /*****************************************************************************
+ 773           *
+ 774           *
+ 775           * Configuration functions
+ 776           *
+ 777           *
+ 778           *
+ 779           ****************************************************************************/
+ 780          
+ 781          #if TRANSIT_SPI_FLASH
+              /* ************************************************************************ */
+              uchar flash_program_config (void)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Write configuration data into flash; The configuration in flash
+               * Remarks     : starts at sector cur_flash_info.sa_cfg
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 14  
+
+              {
+              
+                  config_shadow.signature = FLASH_CFG_SIGNATURE;
+              #if TRANSIT_UNMANAGED_SWUP
+                  if (flash_erase_sector(cur_flash_info.sa_cfg)) {
+                      return 1;
+                  }
+                  return flash_page_program(cur_flash_info.sa_cfg, (uchar *) &config_shadow, sizeof(config_shadow));
+              #else
+                  return TRUE
+              #endif
+              }
+              #endif
+ 804          
+ 805          /* ************************************************************************ */
+ 806          void flash_load_config (void)
+ 807          /* ------------------------------------------------------------------------ --
+ 808           * Purpose     : Read configuration and copies into RAM shadow
+ 809           * Remarks     :
+ 810           * Restrictions:
+ 811           * See also    :
+ 812           * Example     :
+ 813           ****************************************************************************/
+ 814          {
+ 815   1      
+ 816   1          uchar xdata *conf_p = (uchar *) &config_shadow;
+ 817   1      #if TRANSIT_SPI_FLASH
+                  ushort len;
+              
+                  spi_ctrl_enter();
+                  set_cs(FLASH_VOLTAGE_LOW);
+                  output_byte(FLASH_FAST_READ);
+                  output_byte(cur_flash_info.sa_cfg >> 16 & 0xFF);
+                  output_byte(cur_flash_info.sa_cfg >> 8 & 0xFF);
+                  output_byte(cur_flash_info.sa_cfg & 0xFF);
+                  output_byte(0); // Dummy byte
+                  for (len = 0; len < sizeof(config_shadow); len++) {
+                      *conf_p++ = input_byte();
+                  }
+                  set_cs(FLASH_VOLTAGE_HIGH);
+                  spi_ctrl_exit();
+              
+                  if (config_shadow.signature != FLASH_CFG_SIGNATURE) {
+                      /* Set all configuration to all 0 and use the default MAC address
+                         when the signature is not valid */
+                      mac_copy(&config_shadow.sys_mac, spiflash_mac_addr);
+                  }
+              #else
+ 839   1          mac_copy(&config_shadow.sys_mac, spiflash_mac_addr);
+ 840   1      #endif
+ 841   1      }
+ 842          
+ 843          void flash_read_mac_addr (uchar xdata *mac_addr)
+ 844          {
+ 845   1          mac_copy(mac_addr, &config_shadow.sys_mac);
+ 846   1      }
+ 847          
+ 848          #if TRANSIT_UNMANAGED_SYS_MAC_CONF
+ 849          /* Only update RAM copy; call flash_pp_configuration to write into flash */
+ 850          uchar flash_write_mac_addr (uchar xdata *mac_addr)
+ 851          {
+ 852   1      #if TRANSIT_UNMANAGED_MAC_OPER_SET
+C51 COMPILER V9.60.0.0   SPIFLASH                                                          11/30/2021 16:22:26 PAGE 15  
+
+ 853   1          mac_tab_t mac_tab_entry;
+ 854   1      #endif // NPI_CHIP_PORT && TRANSIT_UNMANAGED_MAC_OPER_SET
+ 855   1      
+ 856   1          /* Filter multicast MAC address */
+ 857   1          if (mac_addr[0] & 0x1) {
+ 858   2              return 1;
+ 859   2          }
+ 860   1      
+ 861   1      #if TRANSIT_UNMANAGED_MAC_OPER_SET
+ 862   1          // Delete original MAC entry
+ 863   1          mac_tab_entry.vid = 0;
+ 864   1          mac_tab_entry.port_mask = 1 << CPU_CHIP_PORT;
+ 865   1          mac_copy(mac_tab_entry.mac_addr, &config_shadow.sys_mac);
+ 866   1          h2_mactab_set(&mac_tab_entry, FALSE);
+ 867   1      
+ 868   1          // Add new MAC entry
+ 869   1          mac_copy(mac_tab_entry.mac_addr, mac_addr);
+ 870   1          h2_mactab_set(&mac_tab_entry, TRUE);
+ 871   1      #endif // NPI_CHIP_PORT && TRANSIT_UNMANAGED_MAC_OPER_SET
+ 872   1      
+ 873   1          /* Update new system MAC address in RAM */
+ 874   1          mac_copy(&config_shadow.sys_mac, mac_addr);
+ 875   1      
+ 876   1          return 0;
+ 877   1      }
+ 878          #endif
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    122    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     63      16
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      4    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

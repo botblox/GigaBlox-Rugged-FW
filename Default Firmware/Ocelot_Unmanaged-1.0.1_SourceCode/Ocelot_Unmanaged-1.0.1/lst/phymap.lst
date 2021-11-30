@@ -1,0 +1,286 @@
+C51 COMPILER V9.60.0.0   PHYMAP                                                            11/30/2021 16:22:24 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE PHYMAP
+OBJECT MODULE PLACED IN ..\obj\phymap.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\phy\phymap.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbon
+                    -d;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_ap
+                    -i\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src
+                    -\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PR
+                    -INT(..\lst\phymap.lst) TABS(2) OBJECT(..\obj\phymap.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #include "h2pcs1g.h"    // mac_if_type_t
+  27          
+  28          /*****************************************************************************
+  29           *
+  30           *
+  31           * Defines
+  32           *
+  33           *
+  34           *
+  35           ****************************************************************************/
+  36          #if defined(PHYMAP_DEBUG_ENABLE)
+              #include "print.h"
+              #endif /* PHYMAP_DEBUG_ENABLE */
+  39          
+  40          /*****************************************************************************
+  41           *
+  42           *
+  43           * Typedefs and enums
+  44           *
+  45           *
+  46           *
+  47           ****************************************************************************/
+  48          
+  49          /*****************************************************************************
+  50           *
+  51           *
+C51 COMPILER V9.60.0.0   PHYMAP                                                            11/30/2021 16:22:24 PAGE 2   
+
+  52           * Prototypes for local functions
+  53           *
+  54           *
+  55           *
+  56           ****************************************************************************/
+  57          
+  58          
+  59          /*****************************************************************************
+  60           *
+  61           *
+  62           * Local data
+  63           *
+  64           *
+  65           *
+  66           ****************************************************************************/
+  67          
+  68          /*
+  69          ** Mapping of PHYs on ports. Define for each port, the MIIM (0 or 1) to which
+  70          ** the PHY is connected, and the PHY number.
+  71          */
+  72          static code vtss_cport_no_t cport_to_miim_addr        [NO_OF_CHIP_PORTS] = CPORT_MAPTO_MIIMADDR;
+  73          static      vtss_cport_no_t cport_to_miim_bus         [NO_OF_CHIP_PORTS] = CPORT_MAPTO_MIIMBUS;
+  74          static code vtss_cport_no_t cport_to_coma_mode_disable[NO_OF_CHIP_PORTS] = CPORT_MAPTO_COMA_MODE_DISABLE;
+  75          
+  76          
+  77          /* ************************************************************************ */
+  78          uchar phy_map_miim_no (vtss_cport_no_t chip_port) small
+  79          /* ------------------------------------------------------------------------ --
+  80           * Purpose     : Get MIIM number of the PHY attached to specified port.
+  81           * Remarks     : Returns MIIM number.
+  82           * Restrictions:
+  83           * See also    :
+  84           * Example     :
+  85           ****************************************************************************/
+  86          {
+  87   1          if (chip_port < NO_OF_CHIP_PORTS) { // Avoid memory leak issue
+  88   2              return cport_to_miim_bus[chip_port];
+  89   2          }
+  90   1      
+  91   1      #if defined(PHYMAP_DEBUG_ENABLE)
+                  print_str("%% Error: Wrong parameter when calling phy_map_miim_no(), chip_port=0x");
+                  print_hex_b(chip_port);
+                  print_cr_lf();
+              #endif /* PHYMAP_DEBUG_ENABLE */
+  96   1      
+  97   1          return 0xFF; // Failed case
+  98   1      }
+  99          
+ 100          #if 0   // Uncalled function
+              uchar phy_map_coma_mode_disable (vtss_cport_no_t chip_port) small
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Get if PHY coma mode shall be disabled. Coma mode shall be
+               *               disabled when the last PHY port has been initialized.
+               *               For this to work it is assumed that the ports are initialized
+               *               begin from the lowest phy port to the highest phy port.
+               * Remarks     : Returns if coma mode shall be disabled..
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  if (chip_port < NO_OF_CHIP_PORTS) { // Avoid memory leak issue
+C51 COMPILER V9.60.0.0   PHYMAP                                                            11/30/2021 16:22:24 PAGE 3   
+
+                      return cport_to_coma_mode_disable[chip_port];
+                  }
+              
+              #if defined(PHYMAP_DEBUG_ENABLE)
+                  print_str("%% Error: Wrong parameter when calling phy_map_coma_mode_disable(), chip_port=0x");
+                  print_hex_b(chip_port);
+                  print_cr_lf();
+              #endif /* PHYMAP_DEBUG_ENABLE */
+              
+                  return 0xFF; // Failed case
+              }
+              #endif  // Uncalled function
+ 126          
+ 127          /* ************************************************************************ */
+ 128          uchar phy_map_phy_no (vtss_cport_no_t chip_port) small
+ 129          /* ------------------------------------------------------------------------ --
+ 130           * Purpose     : Get PHY number of the PHY attached to specified port.
+ 131           * Remarks     : Returns PHY number.
+ 132           * Restrictions:
+ 133           * See also    :
+ 134           * Example     :
+ 135           ****************************************************************************/
+ 136          {
+ 137   1          if (chip_port < NO_OF_CHIP_PORTS) { // Avoid memory leak issue
+ 138   2              return cport_to_miim_addr[chip_port];
+ 139   2          }
+ 140   1      
+ 141   1      #if defined(PHYMAP_DEBUG_ENABLE)
+                  print_str("%% Error: Wrong parameter when calling phy_map_phy_no(), chip_port=0x");
+                  print_hex_b(chip_port);
+                  print_cr_lf();
+              #endif /* PHYMAP_DEBUG_ENABLE */
+ 146   1      
+ 147   1          return 0xFF; // Failed case
+ 148   1      }
+ 149          
+ 150          
+ 151          
+ 152          /* ************************************************************************ */
+ 153          bool phy_map (vtss_cport_no_t chip_port) small
+ 154          /* ------------------------------------------------------------------------ --
+ 155           * Purpose     : Check if a PHY is attached to an MIIM for the specified port.
+ 156           * Remarks     : Returns TRUE if so, otherwise FALSE
+ 157           * Restrictions:
+ 158           * See also    :
+ 159           * Example     :
+ 160           ****************************************************************************/
+ 161          {
+ 162   1          if (chip_port < NO_OF_CHIP_PORTS) { // Avoid memory leak issue
+ 163   2              return (cport_to_miim_bus[chip_port] == MAC_IF_INTERNAL ||
+ 164   2                      cport_to_miim_bus[chip_port] == MAC_IF_EXTERNAL);
+ 165   2          }
+ 166   1      
+ 167   1      #if defined(PHYMAP_DEBUG_ENABLE)
+                  print_str("%% Error: Wrong parameter when calling phy_map(), chip_port=0x");
+                  print_hex_b(chip_port);
+                  print_cr_lf();
+              #endif /* PHYMAP_DEBUG_ENABLE */
+ 172   1      
+ 173   1          return 0xFF; // Failed case
+ 174   1      }
+ 175          
+C51 COMPILER V9.60.0.0   PHYMAP                                                            11/30/2021 16:22:24 PAGE 4   
+
+ 176          
+ 177          #if MAC_TO_MEDIA
+ 178          /* ************************************************************************ */
+ 179          uchar phy_map_serdes(vtss_cport_no_t chip_port) small
+ 180          /* ------------------------------------------------------------------------ --
+ 181           * Purpose     : Check if the PHY attached to specified port is a Serdes port.
+ 182           * Remarks     : Returns TRUE if Serdes port, otherwise FALSE
+ 183           * Restrictions:
+ 184           * See also    :
+ 185           * Example     :
+ 186           ****************************************************************************/
+ 187          {
+ 188   1          if (chip_port < NO_OF_CHIP_PORTS) { // Avoid memory leak issue
+ 189   2              return (cport_to_miim_bus[chip_port] == MAC_IF_SERDES_1G ||
+ 190   2                      cport_to_miim_bus[chip_port] == MAC_IF_SERDES_2_5G ||
+ 191   2              cport_to_miim_bus[chip_port] == MAC_IF_100FX ||
+ 192   2              cport_to_miim_bus[chip_port] == MAC_IF_SGMII ||
+ 193   2              cport_to_miim_bus[chip_port] == MAC_IF_SFP_MSA_DETECTED);
+ 194   2          }
+ 195   1      
+ 196   1      #if defined(PHYMAP_DEBUG_ENABLE)
+                  print_str("%% Error: Wrong parameter when calling phy_map_serdes(), chip_port=0x");
+                  print_hex_b(chip_port);
+                  print_cr_lf();
+              #endif /* PHYMAP_DEBUG_ENABLE */
+ 201   1      
+ 202   1          return 0xFF; // Failed case
+ 203   1      }
+ 204          
+ 205          #if TRANSIT_SFP_DETECT
+ 206          void phy_map_serdes_if_update(vtss_cport_no_t chip_port, uchar mac_if) small
+ 207          /* ------------------------------------------------------------------------ --
+ 208           * Purpose     : update if the SPF attached to specified port is a Serdes port.
+ 209           * Remarks     :
+ 210           * Restrictions:
+ 211           * See also    :
+ 212           * Example     :
+ 213           ****************************************************************************/
+ 214          {
+ 215   1          if (chip_port < NO_OF_CHIP_PORTS) { // Avoid memory leak issue
+ 216   2              cport_to_miim_bus[chip_port] = mac_if;
+ 217   2              return;
+ 218   2          }
+ 219   1      
+ 220   1      #if defined(PHYMAP_DEBUG_ENABLE)
+                  print_str("%% Error: Wrong parameter when calling phy_map_serdes_if_update(), chip_port=0x");
+                  print_hex_b(chip_port);
+                  print_cr_lf();
+              #endif /* PHYMAP_DEBUG_ENABLE */
+ 225   1      }
+ 226          #endif // TRANSIT_SFP_DETECT
+ 227          
+ 228          void phy_map_serdes_if_restore(vtss_cport_no_t chip_port) small
+ 229          {
+ 230   1          vtss_cport_no_t cport_to_miim_bus_ori[NO_OF_CHIP_PORTS] = CPORT_MAPTO_MIIMBUS; // Original mapping
+ 231   1      
+ 232   1          if (chip_port < NO_OF_CHIP_PORTS) { // Avoid memory leak issue
+ 233   2              if (cport_to_miim_bus[chip_port] != cport_to_miim_bus_ori[chip_port]) {
+ 234   3                  cport_to_miim_bus[chip_port] = cport_to_miim_bus_ori[chip_port];
+ 235   3              }
+ 236   2              return;
+ 237   2          }
+C51 COMPILER V9.60.0.0   PHYMAP                                                            11/30/2021 16:22:24 PAGE 5   
+
+ 238   1      
+ 239   1      #if defined(PHYMAP_DEBUG_ENABLE)
+                  print_str("%% Error: Wrong parameter when calling phy_map_serdes_if_restore(), chip_port=0x");
+                  print_hex_b(chip_port);
+                  print_cr_lf();
+              #endif /* PHYMAP_DEBUG_ENABLE */
+ 244   1      }
+ 245          #endif // MAC_TO_MEDIA
+ 246          
+ 247          /****************************************************************************/
+ 248          /*                                                                          */
+ 249          /*  End of file.                                                            */
+ 250          /*                                                                          */
+ 251          /****************************************************************************/
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    181    ----
+   CONSTANT SIZE    =     33    ----
+   XDATA SIZE       =     11    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----      12
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

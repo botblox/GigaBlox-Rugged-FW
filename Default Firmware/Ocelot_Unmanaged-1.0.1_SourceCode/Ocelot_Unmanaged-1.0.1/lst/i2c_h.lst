@@ -1,0 +1,634 @@
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE I2C_H
+OBJECT MODULE PLACED IN ..\obj\i2c_h.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\main\i2c_h.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbon
+                    -d;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_ap
+                    -i\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src
+                    -\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PR
+                    -INT(..\lst\i2c_h.lst) TABS(2) OBJECT(..\obj\i2c_h.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #if USE_HW_TWI
+  27          #include "vtss_ocelot_regs.h"
+  28          #include "vtss_ocelot_regs_twi.h"
+  29          #include "h2io.h"
+  30          #include "hwport.h"
+  31          #include "hwconf.h"
+  32          #include "main.h"
+  33          #include "timer.h"
+  34          #include "print.h"
+  35          #include "i2c_h.h"
+  36          
+  37          #define   I2C_DEBUG   0
+  38          #define   I2C_SDA     16 // Ferret
+  39          
+  40          // Since the tar register only must be changed when the controller is disabled
+  41          // we have a special function for setting the tar register.
+  42          void i2c_set_tar_register(const ushort i2c_addr)
+  43          {
+  44   1          ulong value, value1;
+  45   1          
+  46   1          // Check if the TAR register needs to be changed.
+  47   1          H2_READ(VTSS_TWI_TWI_TAR, value);
+  48   1      #if I2C_DEBUG
+                  print_str("VTSS_TWI_TWI_TAR: ");
+                  print_dec(value);
+                  print_cr_lf();
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 2   
+
+              #endif
+  53   1      
+  54   1          if (i2c_addr != (value & 0x3FF))
+  55   1          {
+  56   2      #if I2C_DEBUG
+                      println_str("i2c_addr != ");
+              #endif
+  59   2              // Check that the hardware fifos are empty ( They are flushed when the controller is disabled )
+  60   2              H2_READ(VTSS_TWI_TWI_RXFLR, value);
+  61   2              H2_READ(VTSS_TWI_TWI_TXFLR, value1);
+  62   2      
+  63   2              if (value != 0 || value1 != 0) {
+  64   3                  println_str("I2C - Hardware FIFOs will be flushed");
+  65   3              }
+  66   2      
+  67   2              // Disable the I2C controller because TAR register cannot be changed when the controller is enable
+             -d.
+  68   2              H2_WRITE(VTSS_TWI_TWI_CTRL, 0x0);
+  69   2      
+  70   2              // Set Target address
+  71   2              H2_WRITE(VTSS_TWI_TWI_TAR, i2c_addr);
+  72   2      
+  73   2              // Enable the I2C controller
+  74   2              H2_WRITE(VTSS_TWI_TWI_CTRL, VTSS_F_TWI_TWI_CTRL_ENABLE(1));
+  75   2          }
+  76   1      }
+  77          
+  78          // Function for waiting until the TX buffer is empty . This is needed for making sure that
+  79          // multiple I2C transactions aren't concatenated into one transaction at the I2C bus.
+  80          //
+  81          // If the buffer isn't emptied within 500 ms the function returns 0 else 1
+  82          static int wait_for_tx_buffer_empty(void)
+  83          {
+  84   1      
+  85   1         ulong value;
+  86   1      
+  87   1         // Check if TX fifo is empty. If not wait until it is.
+  88   1         start_timer(MSEC_500);
+  89   1      
+  90   1          do {
+  91   2              H2_READ(VTSS_TWI_TWI_TXFLR, value);
+  92   2              if (timeout()) {
+  93   3                  // Fifo was not emptied within 500 ms.
+  94   3                  println_str("TX buffer empty Timeout\n");
+  95   3                  return 0;
+  96   3              }
+  97   2          } while (value != 0);
+  98   1      
+  99   1          return 1;
+ 100   1      }
+ 101          
+ 102          // Function for transmitting the data - returns 0 upon timeout failure.
+ 103          static int tx_i2c_data(const ulong tx_data)
+ 104          {
+ 105   1          ulong value;
+ 106   1      
+ 107   1          start_timer(MSEC_50);
+ 108   1      
+ 109   1          // Check if TX fifo is full. If so, wait until there is room for one more byte
+ 110   1          do {
+ 111   2              H2_READ(VTSS_TWI_TWI_TXFLR, value);
+ 112   2              if (timeout()) {
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 3   
+
+ 113   3                  // Fifo was not emptied within 50 ms.
+ 114   3                  println_str("I2C Tx Timeout");
+ 115   3                  return 0;
+ 116   3              }
+ 117   2          } while (value > 6);
+ 118   1      
+ 119   1      
+ 120   1          H2_WRITE(VTSS_TWI_TWI_DATA_CMD, tx_data);
+ 121   1          
+ 122   1          //println_str("+++++++++++++++++++++++++++");
+ 123   1          //print_str("VTSS_TWI_TWI_DATA_CMDdsess:0x");
+ 124   1          //print_hex_dw(H2_READ(VTSS_TWI_TWI_DATA_CMD));
+ 125   1          //print_cr_lf();
+ 126   1          
+ 127   1          return 1;
+ 128   1      }
+ 129          
+ 130          // Function for transmitting the data - returns 0 upon timeout failure.
+ 131          static void i2c_set_gpio_alt(const uchar set, const uchar i2c_scl_gpio )
+ 132          {
+ 133   1          
+ 134   1          // The I2C is an overlaid function on the GPIOx and GPIOy. Enable overlaying function 1
+ 135   1          // TWI_SDA                      GPIO16/Overliad function 1
+ 136   1          // TWI_SCL_M14_AD(SFP1_SCL)     GPIO20/Overliad function 3
+ 137   1          // TWI_SCL_M15_AD(SFP2_SCL)     GPIO21/Overliad function 3
+ 138   1              
+ 139   1          if (set) {
+ 140   2              H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0), (VTSS_BIT(I2C_SDA) | VTSS_BIT(i2c_scl_gpio)), (V
+             -TSS_BIT(I2C_SDA) | VTSS_BIT(i2c_scl_gpio)));
+ 141   2              H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1), (VTSS_BIT(i2c_scl_gpio)) , (VTSS_BIT(i2c_scl_gpi
+             -o)));
+ 142   2              H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT, (VTSS_BIT(i2c_scl_gpio)) , (VTSS_BIT(i2c_scl_gpio))
+             -);    
+ 143   2          }  else  {
+ 144   2              H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0), 0, (VTSS_BIT(I2C_SDA) | VTSS_BIT(20)| VTSS_BIT(2
+             -1)));
+ 145   2              H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1), 0 , (VTSS_BIT(20)| VTSS_BIT(21)));
+ 146   2              H2_WRITE_MASKED(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT, 0 , (VTSS_BIT(i2c_scl_gpio)));
+ 147   2          }    
+ 148   1      }
+ 149          
+ 150          // ----------------------------------------------------------------------------
+ 151          // The functions needed for all I2C devices.
+ 152          
+ 153          void i2c_init(void)
+ 154          {
+ 155   1          ulong register_value;
+ 156   1      
+ 157   1          //
+ 158   1          // The bus frequency is set by the platform.
+ 159   1          //
+ 160   1          // Set clock speed for standard speed
+ 161   1          ulong clk_freq = CLOCK_FREQ; /* 250 Mhz */
+ 162   1      #if I2C_DEBUG
+                  print_str("clk_freq = ");
+                  print_dec(clk_freq);
+                  print_cr_lf();
+              #endif
+ 167   1      
+ 168   1          // Setting high clock flank to 10 us (for standard clk (50 kHz))
+ 169   1          register_value = (10 * (clk_freq / 1000000)) - 8; // Datasheet Section 6.13.9.5
+ 170   1          H2_WRITE(VTSS_TWI_TWI_SS_SCL_HCNT, register_value);
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 4   
+
+ 171   1      #if I2C_DEBUG
+                  print_str("VTSS_TWI_TWI_SS_SCL_HCNT = ");
+                  print_dec(register_value);
+                  print_cr_lf();
+              #endif
+ 176   1      
+ 177   1          // Setting low clock flank to 10 us (for standard clk (50 kHz))
+ 178   1          register_value = (10 * (clk_freq / 1000000)) - 1; // Datasheet Section 6.13.9.6
+ 179   1          H2_WRITE(VTSS_TWI_TWI_SS_SCL_LCNT,register_value);
+ 180   1      #if I2C_DEBUG
+                  print_str("VTSS_TWI_TWI_SS_SCL_LCNT = ");
+                  print_dec(register_value);
+                  print_cr_lf();
+              #endif
+ 185   1          // Setting TWI_DELAY to 1000ns
+ 186   1          register_value = VTSS_F_ICPU_CFG_TWI_DELAY_TWI_CONFIG_TWI_CNT_RELOAD((unsigned int)(1 * (clk_freq / 10
+             -00000)) - 1) |
+ 187   1                           VTSS_M_ICPU_CFG_TWI_DELAY_TWI_CONFIG_TWI_DELAY_ENABLE; // Datasheet Section 6.8.3
+ 188   1          H2_WRITE(VTSS_ICPU_CFG_TWI_DELAY_TWI_CONFIG, register_value);
+ 189   1      #if I2C_DEBUG
+                  print_str("VTSS_ICPU_CFG_TWI_DELAY_TWI_CONFIG = 0x");
+                  print_hex_dw(register_value);
+                  print_cr_lf();
+              #endif
+ 194   1      
+ 195   1          // Setting high clock flak to 1.1 us (for fast clock (400 kHz)) (Asym. because VTSS_TWI_FS_SCL_LCNT mu
+             -stn't be below 1.3 us).
+ 196   1          register_value = (1.1 * clk_freq / 1000000) - 8; // Datasheet Section 6.13.9.7
+ 197   1          H2_WRITE(VTSS_TWI_TWI_FS_SCL_HCNT, register_value);
+ 198   1      #if I2C_DEBUG
+                  print_str("VTSS_TWI_TWI_FS_SCL_HCNT = ");
+                  print_dec(register_value);
+                  print_cr_lf();
+              #endif
+ 203   1      
+ 204   1          // Setting low clock flak to 1.4 us ( for fast clock (400 kHz)) ( Asym. because VTSS_TWI_FS_SCL_LCNT m
+             -ustn't be below 1.3 us).
+ 205   1          register_value = (1.4 * clk_freq / 1000000) - 1 ;// Datasheet Section 6.13.9.8
+ 206   1          H2_WRITE(VTSS_TWI_TWI_FS_SCL_LCNT,register_value);
+ 207   1      #if I2C_DEBUG
+                  print_str("VTSS_TWI_TWI_FS_SCL_LCNT = ");
+                  print_dec(register_value);
+                  print_cr_lf();
+              #endif
+ 212   1      
+ 213   1      
+ 214   1          // Set I2C clock frequency to 100 kbps.
+ 215   1          register_value = 0;
+ 216   1          register_value |=  VTSS_BIT(0); // Master enable
+ 217   1          register_value |=  VTSS_BIT(1); // Set bit 1
+ 218   1          register_value &= ~VTSS_BIT(2); // Clear bit 2
+ 219   1          register_value &= ~VTSS_BIT(3); // 7 bit mode
+ 220   1          register_value &= ~VTSS_BIT(4); // 7 bit mode
+ 221   1          register_value |=  VTSS_BIT(5); // Restart enable
+ 222   1          register_value |=  VTSS_BIT(6); // Slave disable
+ 223   1      
+ 224   1          H2_WRITE(VTSS_TWI_TWI_CFG, register_value);
+ 225   1      #if I2C_DEBUG
+                  print_str("VTSS_TWI_TWI_CFG = 0x");
+                  print_hex_dw(register_value);
+                  print_cr_lf();
+              #endif
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 5   
+
+ 230   1      
+ 231   1          // Set clock speed for to normal speed
+ 232   1          register_value = (0.25 * (clk_freq / 1000000)); // Datasheet section 6.13.9.30
+ 233   1          H2_WRITE(VTSS_TWI_TWI_SDA_SETUP, register_value);
+ 234   1      #if I2C_DEBUG
+                  print_str("VTSS_TWI_TWI_SDA_SETUP = ");
+                  print_dec(register_value);
+                  print_cr_lf();
+              #endif
+ 239   1      
+ 240   1      #if I2C_DEBUG
+                  H2_WRITE(VTSS_TWI_TWI_TAR, 0);
+                  H2_WRITE(VTSS_TWI_TWI_SAR, 0);
+                  print_str("VTSS_TWI_TWI_SAR, 0");
+              #endif
+ 245   1      
+ 246   1          // Enable I2C controller
+ 247   1          H2_WRITE(VTSS_TWI_TWI_CTRL, VTSS_F_TWI_TWI_CTRL_ENABLE(1));
+ 248   1      }
+ 249          
+ 250          //ulong i2c_tx(const uchar i2c_addr,
+ 251          //            const uchar *tx_data,
+ 252          //            ulong count)
+ 253          ulong i2c_tx(const uchar i2c_scl_gpio,
+ 254                      const uchar i2c_addr,
+ 255                      const uchar *tx_data,
+ 256                      ulong count)
+ 257          {
+ 258   1          ulong bytes_transmitted = 0;
+ 259   1          int tx_byte;
+ 260   1      
+ 261   1          if (i2c_scl_gpio != 0xff) {
+ 262   2              // Set the gpio pin of i2c clock to output
+ 263   2              // Ferret support a built-in multiplexer to access the i2c device with the same I2C address
+ 264   2              // Enable the proper i2c clock before accessing it and diable it afterwards
+ 265   2              i2c_set_gpio_alt(1, i2c_scl_gpio);
+ 266   2          }
+ 267   1          
+ 268   1          //print_str("i2c_tx ---------------- VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0):0x");
+ 269   1          //print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0)));
+ 270   1          //print_cr_lf();
+ 271   1          //print_str("VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1):0x");
+ 272   1          //print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1)));
+ 273   1          //print_cr_lf();
+ 274   1          //print_str("VTSS_DEVCPU_GCB_GPIO_GPIO_OUT:0x");
+ 275   1          //print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT));
+ 276   1          //print_cr_lf();
+ 277   1          //    print_cr_lf();    print_cr_lf();
+ 278   1          
+ 279   1          
+ 280   1          // Setup Target address register
+ 281   1          i2c_set_tar_register(i2c_addr);
+ 282   1      
+ 283   1          //  Do the write
+ 284   1      #if I2C_DEBUG
+                  print_str("tx_data = ");
+              #endif
+ 287   1          if (wait_for_tx_buffer_empty()) {
+ 288   2              for (tx_byte = count; tx_byte > 0; tx_byte--) {
+ 289   3      #if I2C_DEBUG
+                          print_str("0x");
+                          print_hex_b(*tx_data);
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 6   
+
+              #endif
+ 293   3                  if (tx_i2c_data(*tx_data)  == 0) {
+ 294   4                      // tx buffer remained full - timeout
+ 295   4                      break;
+ 296   4                  }
+ 297   3      
+ 298   3                  tx_data++; // Point to next data
+ 299   3                  bytes_transmitted++; // Ok - one more byte transmitted.
+ 300   3      
+ 301   3              }
+ 302   2          }
+ 303   1      #if I2C_DEBUG
+                  print_cr_lf();
+                  print_str("TX UNLOCK: ");
+                  print_dec(i2c_addr);
+                  print_cr_lf();
+              #endif
+ 309   1          
+ 310   1          delay(MSEC_20);//To make sure tx done
+ 311   1          if (i2c_scl_gpio != 0xff) {
+ 312   2              // Set the gpio pin of i2c clock to input
+ 313   2              // Ferret support a built-in multiplexer to access the i2c device with the same I2C address
+ 314   2              // Enable the proper i2c clock before accessing it and diable it afterwards
+ 315   2              i2c_set_gpio_alt(0, i2c_scl_gpio);
+ 316   2          }
+ 317   1          return bytes_transmitted;
+ 318   1      }
+ 319          
+ 320          #define HW_BUF_LEN 8
+ 321          
+ 322          #if 1 /* for debug */
+ 323          #define P_STR(a)            print_str(a)
+ 324          #define P_HEX_W(a)          print_hex_w(a)
+ 325          #define P_CR_LF()           print_cr_lf()
+ 326          #else
+              #define P_STR(a)
+              #define P_HEX_W(a)
+              #define P_CR_LF()
+              #endif
+ 331          
+ 332          //ulong i2c_rx(const uchar i2c_addr,
+ 333          //             uchar* rx_data,
+ 334          //             ulong count)
+ 335          ulong i2c_rx(const uchar i2c_scl_gpio,
+ 336                      const uchar i2c_addr,
+ 337                      uchar *rx_data,
+ 338                      ulong count)             
+ 339          {   
+ 340   1          ulong bytes_recieved = 0;
+ 341   1          ulong       value;
+ 342   1          ulong       rx_byte;
+ 343   1          int         byte_left ,i = 0;
+ 344   1      
+ 345   1      #if I2C_DEBUG
+                  print_str("RX LOCK: ");
+                  print_dec(i2c_addr); print_cr_lf();
+              #endif
+ 349   1          
+ 350   1          if (i2c_scl_gpio != 0xff) {
+ 351   2              // Set the gpio pin of i2c clock to output
+ 352   2              // Ferret support a built-in multiplexer to access the i2c device with the same I2C address
+ 353   2              // Enable the proper i2c clock before accessing it and diable it afterwards 
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 7   
+
+ 354   2              i2c_set_gpio_alt(1, i2c_scl_gpio);
+ 355   2          }
+ 356   1         //  print_str("i2c_rx ---------------- VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0):0x");
+ 357   1         // print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0)));
+ 358   1         // print_cr_lf();
+ 359   1         // print_str("VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1):0x");
+ 360   1         // print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(1)));
+ 361   1         // print_cr_lf();
+ 362   1         //  print_str("VTSS_DEVCPU_GCB_GPIO_GPIO_OUT:0x");
+ 363   1         // print_hex_dw(H2_READ(VTSS_DEVCPU_GCB_GPIO_GPIO_OUT));
+ 364   1         // print_cr_lf();
+ 365   1         //     print_cr_lf();    print_cr_lf();
+ 366   1          
+ 367   1          
+ 368   1          // Initialize the read
+ 369   1          // Setup Target address register
+ 370   1          i2c_set_tar_register(i2c_addr);
+ 371   1      #if I2C_DEBUG
+                  print_str("########### Rx data ################= ");
+              #endif
+ 374   1          byte_left = count;
+ 375   1          while (byte_left > 0)
+ 376   1          {
+ 377   2              if (byte_left > HW_BUF_LEN)
+ 378   2                  rx_byte = HW_BUF_LEN;
+ 379   2              else
+ 380   2                  rx_byte = byte_left;
+ 381   2              for (; rx_byte > 0; rx_byte--) {
+ 382   3                  if (wait_for_tx_buffer_empty()) {
+ 383   4                      if (tx_i2c_data(VTSS_F_TWI_TWI_DATA_CMD_CMD(1)) == 0) {
+ 384   5                          println_str("I2C - Couldn't transmit read request");
+ 385   5                          if (i2c_scl_gpio != 0xff) {
+ 386   6                              // Set the gpio pin of i2c clock to input
+ 387   6                              // Ferret support a built-in multiplexer to access the i2c device with the same I2
+             -C address
+ 388   6                              // Enable the proper i2c clock before accessing it and diable it afterwards
+ 389   6                              i2c_set_gpio_alt(0, i2c_scl_gpio);
+ 390   6                          }
+ 391   5                          return 0;
+ 392   5                      }
+ 393   4                  }
+ 394   3                  else{
+ 395   4                      println_str("wait_for_tx_buffer_empty");
+ 396   4                  }
+ 397   3      
+ 398   3              }
+ 399   2      
+ 400   2              // Set timeout to 100 msec.
+ 401   2              //delay(MSEC_100);
+ 402   2              start_timer(MSEC_100);
+ 403   2              if (byte_left > HW_BUF_LEN)
+ 404   2              {
+ 405   3                  rx_byte = HW_BUF_LEN;
+ 406   3                  byte_left = byte_left  - HW_BUF_LEN;
+ 407   3              }
+ 408   2              else
+ 409   2              {
+ 410   3                  rx_byte = byte_left;
+ 411   3                  byte_left = 0;
+ 412   3              }
+ 413   2      
+ 414   2              for (; rx_byte > 0; rx_byte--) {
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 8   
+
+ 415   3      
+ 416   3                  do {
+ 417   4                      H2_READ(VTSS_TWI_TWI_RXFLR, value);
+ 418   4                      //print_str("VTSS_TWI_TWI_RXFLR : ");
+ 419   4                      //print_dec(value);
+ 420   4                      //print_cr_lf();
+ 421   4                      if (timeout()) {
+ 422   5                          // Fifo was not emptied within 100 ms.
+ 423   5                          print_str("Read TimeOut(Addr) "); print_dec(i2c_addr);
+ 424   5                          print_cr_lf();
+ 425   5      
+ 426   5                          /* Recover I2C when errors happen, for example,
+ 427   5                             plug out SFP module when reading I2C data
+ 428   5                          */
+ 429   5                          H2_READ(VTSS_TWI_TWI_RAW_INTR_STAT, value);
+ 430   5                          P_STR("RAW_INTR_STAT(0xd): 0x");  P_HEX_W(value); P_CR_LF();
+ 431   5      
+ 432   5                          H2_READ(VTSS_TWI_TWI_RX_TL, value);
+ 433   5                          P_STR("RX_TL(0xe): 0x");  P_HEX_W(value); P_CR_LF();
+ 434   5      
+ 435   5                          H2_READ(VTSS_TWI_TWI_TX_TL, value);
+ 436   5                          P_STR("TX_TL(0xf): 0x");  P_HEX_W(value); P_CR_LF();
+ 437   5      
+ 438   5                          H2_READ(VTSS_TWI_TWI_CLR_RX_UNDER, value);
+ 439   5                          P_STR("CLR_RX_UNDER(0x11): 0x");  P_HEX_W(value); P_CR_LF();
+ 440   5      
+ 441   5                          H2_READ(VTSS_TWI_TWI_CLR_RX_OVER, value);
+ 442   5                          P_STR("CLR_RX_OVER(0x12): 0x");  P_HEX_W(value); P_CR_LF();
+ 443   5      
+ 444   5                          H2_READ(VTSS_TWI_TWI_CLR_TX_OVER, value);
+ 445   5                          P_STR("CLR_TX_OVER(0x13): 0x");  P_HEX_W(value); P_CR_LF();
+ 446   5      
+ 447   5                          H2_READ(VTSS_TWI_TWI_CLR_RD_REQ, value);
+ 448   5                          P_STR("CLR_RD_REQ(0x14): 0x");  P_HEX_W(value); P_CR_LF();
+ 449   5      
+ 450   5                          H2_READ(VTSS_TWI_TWI_CLR_TX_ABRT, value);
+ 451   5                          P_STR("CLR_TX_ABRT(0x15): 0x");  P_HEX_W(value); P_CR_LF();
+ 452   5      
+ 453   5                          H2_READ(VTSS_TWI_TWI_CLR_RX_DONE, value);
+ 454   5                          P_STR("CLR_RX_DONE(0x16): 0x");  P_HEX_W(value); P_CR_LF();
+ 455   5      
+ 456   5                          H2_READ(VTSS_TWI_TWI_CLR_ACTIVITY, value);
+ 457   5                          P_STR("CLR_ACTIVITY(0x17): 0x");  P_HEX_W(value); P_CR_LF();
+ 458   5      
+ 459   5                          H2_READ(VTSS_TWI_TWI_CLR_STOP_DET, value);
+ 460   5                          P_STR("CLR_STOP_DET(0x18): 0x");  P_HEX_W(value); P_CR_LF();
+ 461   5      
+ 462   5                          H2_READ(VTSS_TWI_TWI_CLR_START_DET, value);
+ 463   5                          P_STR("CLR_START_DET(0x19): 0x");  P_HEX_W(value); P_CR_LF();
+ 464   5      
+ 465   5                          H2_READ(VTSS_TWI_TWI_CLR_GEN_CALL, value);
+ 466   5                          P_STR("CLR_GEN_CALL(0x1a): 0x");  P_HEX_W(value); P_CR_LF();
+ 467   5      
+ 468   5                          H2_READ(VTSS_TWI_TWI_CTRL, value);
+ 469   5                          P_STR("CTRL(0x1b): 0x");  P_HEX_W(value); P_CR_LF();
+ 470   5      
+ 471   5                          H2_READ(VTSS_TWI_TWI_STAT, value);
+ 472   5                          P_STR("STAT(0x1c): 0x");  P_HEX_W(value); P_CR_LF();
+ 473   5      
+ 474   5                          H2_READ(VTSS_TWI_TWI_TXFLR, value);
+ 475   5                          P_STR("TXFLR(0x1d): 0x");  P_HEX_W(value); P_CR_LF();
+ 476   5      
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 9   
+
+ 477   5                          H2_READ(VTSS_TWI_TWI_RXFLR, value);
+ 478   5                          P_STR("RXFLR(0x1e): 0x");  P_HEX_W(value); P_CR_LF();
+ 479   5      
+ 480   5                          H2_READ(VTSS_TWI_TWI_TX_ABRT_SOURCE, value);
+ 481   5                          P_STR("TX_ABRT_SOURCE(0x20): 0x");  P_HEX_W(value); P_CR_LF();
+ 482   5      
+ 483   5                          H2_READ(VTSS_TWI_TWI_CLR_INTR, value);
+ 484   5                          P_STR("CLR_INTR(0x10): 0x");  P_HEX_W(value); P_CR_LF();
+ 485   5      
+ 486   5                          i2c_init();
+ 487   5                          if (i2c_scl_gpio != 0xff) {
+ 488   6                          // Set the gpio pin of i2c clock to input
+ 489   6                          // Ferret support a built-in multiplexer to access the i2c device with the same I2C ad
+             -dress
+ 490   6                          // Enable the proper i2c clock before accessing it and diable it afterwards
+ 491   6                          i2c_set_gpio_alt(0, i2c_scl_gpio);
+ 492   6                      }
+ 493   5                          return 0;
+ 494   5                      }
+ 495   4                  } while (value == 0);
+ 496   3                  
+ 497   3                  if (value > count) {
+ 498   4                      ulong reg_val;
+ 499   4                      /* The value of VTSS_TWI_TWI_RXFLR must be eqaul to count. It could be an issue if not */
+ 500   4                      print_str("VTSS_TWI_TWI_RXFLR(the data in the rx fifo): "); print_dec(value); 
+ 501   4                      print_str(" is bigger than expected: "); print_dec(count); print_cr_lf();
+ 502   4                      print_str("VTSS_TWI_TWI_RAW_INTR_STAT: "); H2_READ(VTSS_TWI_TWI_RAW_INTR_STAT, reg_val); p
+             -rint_hex_dw(reg_val); print_cr_lf();
+ 503   4                      print_str("VTSS_TWI_TWI_TX_ABRT_SOURCE: "); H2_READ(VTSS_TWI_TWI_TX_ABRT_SOURCE, reg_val);
+             - print_hex_dw(reg_val); print_cr_lf();
+ 504   4      
+ 505   4                      //I2c is wrong, reset it.
+ 506   4                      // Disable the I2C controller
+ 507   4                      H2_WRITE(VTSS_TWI_TWI_CTRL, 0x0);
+ 508   4                      delay(MSEC_20);
+ 509   4                      // Enable the I2C controller
+ 510   4                      H2_WRITE(VTSS_TWI_TWI_CTRL, VTSS_F_TWI_TWI_CTRL_ENABLE(1));
+ 511   4                  }
+ 512   3                  H2_READ(VTSS_TWI_TWI_DATA_CMD, value);
+ 513   3                  *rx_data = value & 0xff;
+ 514   3                  //print_str("VTSS_TWI_TWI_DATA_CMD: 0x"); print_hex_b(value); print_cr_lf();
+ 515   3      #if I2C_DEBUG
+                          print_dec(i); i++;
+                          print_str(" 0x");
+                          print_hex_b(*rx_data);
+                          print_cr_lf();
+              #endif
+ 521   3                  rx_data++;
+ 522   3                  bytes_recieved++;
+ 523   3              }
+ 524   2          }
+ 525   1      #if 0
+                  print_str("bytes_recieved: ");
+                  print_dec(bytes_recieved);
+                  H2_READ(VTSS_TWI_TWI_RXFLR, value);
+                  print_str("  VTSS_TWI_TWI_RXFLR : ");
+                  print_dec(value);
+                  print_cr_lf();
+              #endif
+ 533   1          delay(MSEC_20); // To make sure tx done
+ 534   1          if (i2c_scl_gpio != 0xff) {
+ 535   2              // Set the gpio pin of i2c clock to input
+C51 COMPILER V9.60.0.0   I2C_H                                                             11/30/2021 16:22:18 PAGE 10  
+
+ 536   2              // Ferret support a built-in multiplexer to access the i2c device with the same I2C address
+ 537   2              // Enable the proper i2c clock before accessing it and diable it afterwards
+ 538   2              i2c_set_gpio_alt(0, i2c_scl_gpio);
+ 539   2          }
+ 540   1          
+ 541   1          return bytes_recieved;
+ 542   1      }
+ 543          
+ 544          #if USE_HW_TWI
+ 545          #if defined(VTSS_ARCH_LUTON26)
+              ulong i2c_eeprom_read(const uchar i2c_addr,
+                                    ulong *mem_addr,
+                                    uchar *i2c_data)
+              {
+                  uchar addr_8;
+              
+                  if (*mem_addr > 65535) {
+                    print_str(" addr > 65535 not implemet");
+                  } else if (*mem_addr > 255) {
+                    addr_8  = (*mem_addr) >> 8;
+                    i2c_tx(20, i2c_addr, &addr_8, 1);
+                    addr_8  = (*mem_addr)& 0xff;
+                    i2c_tx(20, i2c_addr, &addr_8, 1);
+                  } else {
+                    addr_8  = *mem_addr;
+                    i2c_tx(20, i2c_addr, &addr_8, 1);
+                  }
+              
+                  if (i2c_rx(20, i2c_addr,i2c_data, 1) != 0 ) {
+                      return TRUE; // suceess
+                  } else {
+                      return FALSE; // fail
+                  }
+              
+              }
+              #endif //#if defined(VTSS_ARCH_LUTON26)
+ 572          #endif //USE_HW_TWI
+ 573          
+ 574          #endif
+ 575          
+ 576          //---------------------------------------------------------------------------
+ 577          // EOF i2c_h.c
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2323    ----
+   CONSTANT SIZE    =    675    ----
+   XDATA SIZE       =   ----      71
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,470 @@
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE H2MACTAB
+OBJECT MODULE PLACED IN ..\obj\h2mactab.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\switch\h2mactab.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\w
+                    -inbond;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vt
+                    -ss_api\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;.
+                    -.\src\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTE
+                    -ND PRINT(..\lst\h2mactab.lst) TABS(2) OBJECT(..\obj\h2mactab.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          
+  27          #include "vtss_api_base_regs.h"
+  28          #include "h2mactab.h"
+  29          #include "h2.h"
+  30          #include "h2io.h"
+  31          #include "timer.h"
+  32          #include "main.h"
+  33          #include "misc2.h"  // For TEST_PORT_BIT_MASK()/test_bit_32()
+  34          
+  35          /*****************************************************************************
+  36           *
+  37           *
+  38           * Defines
+  39           *
+  40           *
+  41           *
+  42           ****************************************************************************/
+  43          
+  44          
+  45          /* MAC table commands */
+  46          #define MAC_TAB_IDLE   0
+  47          #define MAC_TAB_LEARN  1
+  48          #define MAC_TAB_FORGET 2
+  49          #define MAC_TAB_AGE    3
+  50          #define MAC_TAB_GET_NX 4
+  51          #define MAC_TAB_CLEAR  5
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 2   
+
+  52          #define MAC_TAB_READ   6
+  53          #define MAC_TAB_WRITE  7
+  54          
+  55          
+  56          /* Define period for performing ageing, granularity is 1 second */
+  57          #define AGEING_TIMEOUT 300UL
+  58          
+  59          
+  60          /*****************************************************************************
+  61           *
+  62           *
+  63           * Typedefs and enums
+  64           *
+  65           *
+  66           *
+  67           ****************************************************************************/
+  68          
+  69          
+  70          /*****************************************************************************
+  71           *
+  72           *
+  73           * Prototypes for local functions
+  74           *
+  75           *
+  76           *
+  77           ****************************************************************************/
+  78          #if TRANSIT_UNMANAGED_MAC_OPER_GET || TRANSIT_UNMANAGED_MAC_OPER_SET
+  79          static void write_macdata_reg(mac_tab_t xdata *mac_entry_ptr);
+  80          static ulong build_machdata(mac_tab_t xdata *mac_entry_ptr);
+  81          static ulong build_macldata(mac_tab_t xdata *mac_entry_ptr);
+  82          static BOOL is_ipmc_entry(mac_tab_t xdata *mac_entry_ptr);
+  83          static BOOL is_ipv6mc_entry(mac_tab_t xdata *mac_entry_ptr);
+  84          static ushort h2_mac_type(mac_tab_t xdata *mac_entry_ptr);
+  85          #endif // TRANSIT_UNMANAGED_MAC_OPER_GET || TRANSIT_UNMANAGED_MAC_OPER_SET
+  86          
+  87          static void do_mactab_cmd(ulong mac_access_reg_val);
+  88          
+  89          /*****************************************************************************
+  90           *
+  91           *
+  92           * Local data
+  93           *
+  94           *
+  95           *
+  96           ****************************************************************************/
+  97          #if TRANSIT_UNMANAGED_MAC_OPER_SET
+  98          /* Add/Delete MAC address entry
+  99           * Only support unicast and one port setting in port_mask parameter currently.
+ 100           */
+ 101          void h2_mactab_set(const mac_tab_t xdata *mac_tab_entry_ptr, BOOL xdata is_add)
+ 102          {
+ 103   1          uchar           pgid = 0;
+ 104   1          ulong           idx;
+ 105   1          ulong           mach, macl, aged = 0;
+ 106   1          port_bit_mask_t mask = 0, ipv6_mask = 0;
+ 107   1          ushort          type;
+ 108   1      
+ 109   1          if (!is_add) { // Delete operation
+ 110   2              /* Copy MAC and vid to register and execute forget command */
+ 111   2              write_macdata_reg(mac_tab_entry_ptr);
+ 112   2              do_mactab_cmd(VTSS_F_ANA_ANA_TABLES_MACACCESS_ENTRY_TYPE(h2_mac_type(mac_tab_entry_ptr)) |
+ 113   2                            VTSS_F_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(MAC_CMD_FORGET));
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 3   
+
+ 114   2          } else { // Add operation
+ 115   2              type = h2_mac_type(mac_tab_entry_ptr);
+ 116   2              mach = build_machdata(mac_tab_entry_ptr);
+ 117   2              macl = build_macldata(mac_tab_entry_ptr);
+ 118   2              
+ 119   2              if (type == MAC_TYPE_IPV4_MC || type == MAC_TYPE_IPV6_MC) {
+ 120   3                  mask = mac_tab_entry_ptr->port_mask;
+ 121   3                  if (type == MAC_TYPE_IPV4_MC) {
+ 122   4                      /* Encode port mask directly */
+ 123   4                      macl = ((macl & 0x00FFFFFF) | ((mask<<24) & 0xFF000000));
+ 124   4                      mach = ((mach & 0xFFFF0000) | ((mask>>8) & 0x0000FFFF));
+ 125   4                      idx = ((mask>>24) & 0x3); /* Ports 24-25 */
+ 126   4                  } else {
+ 127   4                      /* Encode port mask directly */
+ 128   4                      mach = ((mach & 0xFFFF0000) | (mask & 0x0000FFFF)); /* ports 0-15  */
+ 129   4                      idx = ((mask>>16) & 0x3F);                          /* ports 16-21 */
+ 130   4                      ipv6_mask = ((mask>>22) & 0x3);                     /* ports 22-24 */
+ 131   4                      aged = ((mask>>25) & 1);                            /* port 25     */
+ 132   4                  }
+ 133   3              } else {
+ 134   3                  type = MAC_TYPE_LOCKED;
+ 135   3                  for (idx = 0; idx < NO_OF_CHIP_PORTS; idx++) {
+ 136   4                      if (TEST_PORT_BIT_MASK(idx, &mac_tab_entry_ptr->port_mask)) {
+ 137   5                          break;
+ 138   5                      }
+ 139   4                  }
+ 140   3              }
+ 141   2              
+ 142   2              /* Copy MAC and vid to register and execute learn command */
+ 143   2              H2_WRITE(VTSS_ANA_ANA_TABLES_MACHDATA, mach);
+ 144   2              H2_WRITE(VTSS_ANA_ANA_TABLES_MACLDATA, macl);
+ 145   2      
+ 146   2      #if defined(VTSS_ARCH_LUTON26)
+                      do_mactab_cmd(VTSS_F_ANA_ANA_TABLES_MACACCESS_IP6_MASK(ipv6_mask)       |
+                                    (aged ? VTSS_F_ANA_ANA_TABLES_MACACCESS_AGED_FLAG    : 0) |
+                                    VTSS_F_ANA_ANA_TABLES_MACACCESS_VALID                     |
+                                    VTSS_F_ANA_ANA_TABLES_MACACCESS_ENTRY_TYPE(type)          |
+                                    VTSS_F_ANA_ANA_TABLES_MACACCESS_DEST_IDX(idx)             |
+                                    VTSS_F_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(MAC_CMD_LEARN));
+              #elif defined(VTSS_ARCH_OCELOT)
+ 154   2              do_mactab_cmd(VTSS_F_ANA_ANA_TABLES_MACACCESS_AGED_FLAG(aged)           |
+ 155   2                            VTSS_F_ANA_ANA_TABLES_MACACCESS_VALID(1)                  |
+ 156   2                            VTSS_F_ANA_ANA_TABLES_MACACCESS_ENTRY_TYPE(type)          |
+ 157   2                            VTSS_F_ANA_ANA_TABLES_MACACCESS_DEST_IDX(idx)             |
+ 158   2                            VTSS_F_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(MAC_CMD_LEARN));
+ 159   2      #endif
+ 160   2          }
+ 161   1      }
+ 162          #endif // TRANSIT_UNMANAGED_MAC_OPER_SET
+ 163          
+ 164          #if TRANSIT_UNMANAGED_MAC_OPER_GET
+ 165          ulong h2_mactab_result(mac_tab_t xdata *mac_tab_entry_ptr, uchar xdata *ipmc_entry)
+ 166          {
+ 167   1          ulong value;
+ 168   1          ulong type, idx, aged;
+ 169   1          ulong mach, macl;
+ 170   1      
+ 171   1          H2_READ(VTSS_ANA_ANA_TABLES_MACACCESS, value);
+ 172   1      
+ 173   1          /* Check if entry is valid */
+ 174   1      #if defined(VTSS_ARCH_LUTON26)
+                  if (!(value & VTSS_F_ANA_ANA_TABLES_MACACCESS_VALID)) {
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 4   
+
+                      return 0XFFFFFFFF;
+                  }
+              #elif defined(VTSS_ARCH_OCELOT)
+ 179   1          if (!(value & VTSS_M_ANA_ANA_TABLES_MACACCESS_VALID)) {
+ 180   2              return 0XFFFFFFFF;
+ 181   2          }
+ 182   1      #endif
+ 183   1      
+ 184   1          type = VTSS_X_ANA_ANA_TABLES_MACACCESS_ENTRY_TYPE(value);
+ 185   1          idx  = VTSS_X_ANA_ANA_TABLES_MACACCESS_DEST_IDX(value);
+ 186   1      #if defined(VTSS_ARCH_LUTON26)
+                  aged = VTSS_BOOL(value & VTSS_F_ANA_ANA_TABLES_MACACCESS_AGED_FLAG);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 189   1          aged = VTSS_BOOL(value & VTSS_M_ANA_ANA_TABLES_MACACCESS_AGED_FLAG);
+ 190   1      #endif
+ 191   1      
+ 192   1          H2_READ(VTSS_ANA_ANA_TABLES_MACHDATA, mach); // get the next MAC address
+ 193   1          H2_READ(VTSS_ANA_ANA_TABLES_MACLDATA, macl);
+ 194   1      
+ 195   1          if (type == MAC_TYPE_IPV4_MC || type == MAC_TYPE_IPV6_MC) {
+ 196   2              /* IPv4/IPv6 multicast address */
+ 197   2              *ipmc_entry = TRUE;
+ 198   2      
+ 199   2              /* Read encoded port mask and update address registers */
+ 200   2              if (type == MAC_TYPE_IPV6_MC) {
+ 201   3                  /* IPv6 entry  */
+ 202   3                  /* Portmask:  25               24-22                21-16         15-0    */
+ 203   3                  mac_tab_entry_ptr->port_mask = (aged<<25  | (((value>>16) & 0x7)<<22) | (idx<<16) | (mach & 0x
+             -ffff));
+ 204   3                  mach = ((mach & 0xffff0000) | 0x00003333);
+ 205   3              } else {
+ 206   3                  /* IPv4 entry */
+ 207   3                  /* Portmask:25-24        23-0  */
+ 208   3                  mac_tab_entry_ptr->port_mask = ((idx<<24) | ((mach<<8) & 0xFFFF00) | ((macl>>24) & 0xff));
+ 209   3                  mach = ((mach & 0xffff0000) | 0x00000100);
+ 210   3                  macl = ((macl & 0x00ffffff) | 0x5e000000);
+ 211   3              }
+ 212   2          } else {
+ 213   2              *ipmc_entry = FALSE;
+ 214   2      #if defined(VTSS_ARCH_LUTON26)
+                      H2_READ(VTSS_ANA_ANA_TABLES_PGID(idx), mac_tab_entry_ptr->port_mask);
+              #elif defined(VTSS_ARCH_OCELOT)
+ 217   2              H2_READ(VTSS_ANA_PGID_PGID(idx), mac_tab_entry_ptr->port_mask);
+ 218   2      #endif
+ 219   2          }
+ 220   1      
+ 221   1          mac_tab_entry_ptr->vid = ((mach>>16) & 0xFFF);
+ 222   1          mac_tab_entry_ptr->mac_addr[0] = ((mach>>8)  & 0xff);
+ 223   1          mac_tab_entry_ptr->mac_addr[1] = ((mach>>0)  & 0xff);
+ 224   1          mac_tab_entry_ptr->mac_addr[2] = ((macl>>24) & 0xff);
+ 225   1          mac_tab_entry_ptr->mac_addr[3] = ((macl>>16) & 0xff);
+ 226   1          mac_tab_entry_ptr->mac_addr[4] = ((macl>>8)  & 0xff);
+ 227   1          mac_tab_entry_ptr->mac_addr[5] = ((macl>>0)  & 0xff);
+ 228   1      
+ 229   1      #if 0
+                  print_str("Found MAC ");
+                  print_mac_addr(mac_tab_entry_ptr->mac_addr);
+                  print_str(": ");
+                  print_port_list(mac_tab_entry_ptr->port_mask);
+                  print_cr_lf();
+              #endif
+ 236   1      
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 5   
+
+ 237   1          return value;
+ 238   1      }
+ 239          
+ 240          /* GET/GETNEXT MAC address entry
+ 241           * Return 0xFFFFFFFF when entry is invalid. Otherwize, the operation is success.
+ 242           */
+ 243          ulong h2_mactab_get_next(mac_tab_t xdata *mac_tab_entry_ptr, BOOL xdata *ipmc_entry, BOOL xdata is_getnext
+             -)
+ 244          {
+ 245   1          ushort entry_type;
+ 246   1          ulong rc;
+ 247   1      
+ 248   1          // EA = 0; // Disable interrupt while doing the indirect register access.
+ 249   1          write_macdata_reg(mac_tab_entry_ptr);
+ 250   1      
+ 251   1          if (is_getnext) {
+ 252   2              entry_type = h2_mac_type(mac_tab_entry_ptr);
+ 253   2      
+ 254   2              /* Do a get next lookup */
+ 255   2              do_mactab_cmd(VTSS_F_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(MAC_CMD_GET_NEXT));
+ 256   2          } else {
+ 257   2      #if defined(VTSS_ARCH_LUTON26)
+                      do_mactab_cmd(VTSS_F_ANA_ANA_TABLES_MACACCESS_VALID |
+                                    VTSS_F_ANA_ANA_TABLES_MACACCESS_ENTRY_TYPE(entry_type) |
+                                    VTSS_F_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(MAC_CMD_READ));
+              #elif defined(VTSS_ARCH_OCELOT)
+ 262   2              do_mactab_cmd(VTSS_F_ANA_ANA_TABLES_MACACCESS_VALID(1) |
+ 263   2                            VTSS_F_ANA_ANA_TABLES_MACACCESS_ENTRY_TYPE(entry_type) |
+ 264   2                            VTSS_F_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(MAC_CMD_READ));
+ 265   2      #endif
+ 266   2          }
+ 267   1      
+ 268   1          rc = h2_mactab_result(mac_tab_entry_ptr, ipmc_entry);
+ 269   1      
+ 270   1          // EA = 1; // Enable interrupt
+ 271   1          return rc;
+ 272   1      }
+ 273          #endif // TRANSIT_UNMANAGED_MAC_OPER_GET
+ 274          
+ 275          /* ************************************************************************ */
+ 276          void h2_mactab_agetime_set(void)
+ 277          /* ------------------------------------------------------------------------ --
+ 278           * Purpose     : Normal auto aging in seconds
+ 279           * Remarks     :
+ 280           * Restrictions:
+ 281           * See also    :
+ 282           * Example     :
+ 283           ****************************************************************************/
+ 284          {
+ 285   1          /* ANA:ANA:AUTOAGE:AGE_PERIOD
+ 286   1           * An inactive unlocked MAC table entry is aged after 2*AGE_PERIOD
+ 287   1           */
+ 288   1      #if defined(VTSS_ARCH_OCELOT)
+ 289   1          H2_WRITE_MASKED(VTSS_ANA_ANA_AUTOAGE,
+ 291   1                          VTSS_F_ANA_ANA_AUTOAGE_AGE_PERIOD(AGEING_TIMEOUT / 2),
+ 291   1                          VTSS_M_ANA_ANA_AUTOAGE_AGE_PERIOD);
+ 292   1      #elif defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE(VTSS_ANA_ANA_AUTOAGE,
+                           VTSS_F_ANA_ANA_AUTOAGE_AGE_PERIOD(AGEING_TIMEOUT / 2));
+              #endif
+ 296   1      }
+ 297          
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 6   
+
+ 298          /* ************************************************************************ */
+ 299          void h2_mactab_age(uchar pgid_age, uchar pgid, uchar vid_age, ushort vid)
+ 300          /* ------------------------------------------------------------------------ --
+ 301           * Purpose     : Perform ageing operation on MAC address table.
+ 302           * Remarks     :
+ 303           * Restrictions:
+ 304           * See also    :
+ 305           * Example     :
+ 306           ****************************************************************************/
+ 307          {
+ 308   1          /* Selective aging */
+ 309   1      #if defined(VTSS_ARCH_LUTON26)
+                  H2_WRITE(VTSS_ANA_ANA_ANAGEFIL,
+                         (pgid_age ? VTSS_F_ANA_ANA_ANAGEFIL_PID_EN : 0) |
+                         (vid_age ? VTSS_F_ANA_ANA_ANAGEFIL_VID_EN  : 0) |
+                         VTSS_F_ANA_ANA_ANAGEFIL_PID_VAL(pgid) |
+                         VTSS_F_ANA_ANA_ANAGEFIL_VID_VAL(vid));
+              #elif defined(VTSS_ARCH_OCELOT)
+ 316   1          H2_WRITE_MASKED(VTSS_ANA_ANA_ANAGEFIL,
+ 324   1                          VTSS_F_ANA_ANA_ANAGEFIL_PID_EN(pgid_age) |
+ 324   1                          VTSS_F_ANA_ANA_ANAGEFIL_VID_EN(vid_age) |
+ 324   1                          VTSS_F_ANA_ANA_ANAGEFIL_PID_VAL(pgid) |
+ 324   1                          VTSS_F_ANA_ANA_ANAGEFIL_VID_VAL(vid),
+ 324   1                          VTSS_M_ANA_ANA_ANAGEFIL_PID_EN |
+ 324   1                          VTSS_M_ANA_ANA_ANAGEFIL_VID_EN |
+ 324   1                          VTSS_M_ANA_ANA_ANAGEFIL_PID_VAL |
+ 324   1                          VTSS_M_ANA_ANA_ANAGEFIL_VID_VAL);
+ 325   1      #endif
+ 326   1      
+ 327   1          /* Do the aging */
+ 328   1          do_mactab_cmd(VTSS_F_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(MAC_CMD_TABLE_AGE));
+ 329   1      
+ 330   1          /* Clear age filter again to avoid affecting automatic ageing */
+ 331   1          H2_WRITE(VTSS_ANA_ANA_ANAGEFIL, 0);
+ 332   1      }
+ 333          
+ 334          /* ************************************************************************ */
+ 335          void h2_mactab_clear(void)
+ 336          /* ------------------------------------------------------------------------ --
+ 337           * Purpose     : Perform clear operation on MAC address table.
+ 338           * Remarks     :
+ 339           * Restrictions:
+ 340           * See also    :
+ 341           * Example     :
+ 342           ****************************************************************************/
+ 343          {
+ 344   1          do_mactab_cmd(MAC_CMD_TABLE_CLEAR);
+ 345   1      }
+ 346          
+ 347          
+ 348          void h2_mactab_flush_port(vtss_cport_no_t chip_port)
+ 349          {
+ 350   1          // Age twice means flush
+ 351   1          h2_mactab_age(1, chip_port, 0, 0);
+ 352   1          h2_mactab_age(1, chip_port, 0, 0);
+ 353   1      }
+ 354          
+ 355          /*****************************************************************************
+ 356           *
+ 357           *
+ 358           * Support functions
+ 359           *
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 7   
+
+ 360           *
+ 361           *
+ 362           ****************************************************************************/
+ 363          static void do_mactab_cmd(ulong mac_access_reg_val)
+ 364          {
+ 365   1          ulong cmd;
+ 366   1      
+ 367   1          H2_WRITE(VTSS_ANA_ANA_TABLES_MACACCESS, mac_access_reg_val);
+ 368   1          do {
+ 369   2              H2_READ(VTSS_ANA_ANA_TABLES_MACACCESS, cmd);
+ 370   2          } while (VTSS_X_ANA_ANA_TABLES_MACACCESS_MAC_TABLE_CMD(cmd) != MAC_CMD_IDLE);
+ 371   1      }
+ 372          
+ 373          #if TRANSIT_UNMANAGED_MAC_OPER_GET || TRANSIT_UNMANAGED_MAC_OPER_SET
+ 374          static void write_macdata_reg(mac_tab_t xdata *mac_entry_ptr)
+ 375          {
+ 376   1          H2_WRITE(VTSS_ANA_ANA_TABLES_MACHDATA, build_machdata(mac_entry_ptr));
+ 377   1          H2_WRITE(VTSS_ANA_ANA_TABLES_MACLDATA, build_macldata(mac_entry_ptr));
+ 378   1      }
+ 379          
+ 380          static ulong build_machdata(mac_tab_t xdata *mac_entry_ptr)
+ 381          {
+ 382   1          ul_union_t tmp;
+ 383   1      
+ 384   1          tmp.b[0] = HIGH_BYTE(mac_entry_ptr->vid);
+ 385   1          tmp.b[1] = LOW_BYTE(mac_entry_ptr->vid);
+ 386   1          tmp.b[2] = mac_entry_ptr->mac_addr[0];
+ 387   1          tmp.b[3] = mac_entry_ptr->mac_addr[1];
+ 388   1      
+ 389   1          return tmp.l;
+ 390   1      }
+ 391          
+ 392          static ulong build_macldata(mac_tab_t xdata *mac_entry_ptr)
+ 393          {
+ 394   1          ul_union_t tmp;
+ 395   1      
+ 396   1          tmp.b[0] = mac_entry_ptr->mac_addr[2];
+ 397   1          tmp.b[1] = mac_entry_ptr->mac_addr[3];
+ 398   1          tmp.b[2] = mac_entry_ptr->mac_addr[4];
+ 399   1          tmp.b[3] = mac_entry_ptr->mac_addr[5];
+ 400   1      
+ 401   1          return tmp.l;
+ 402   1      }
+ 403          
+ 404          
+ 405          static BOOL is_ipmc_entry(mac_tab_t xdata *mac_entry_ptr)
+ 406          {
+ 407   1          return (mac_entry_ptr->mac_addr[0] == 0x01) &&
+ 408   1                 (mac_entry_ptr->mac_addr[1] == 0x00) &&
+ 409   1                 (mac_entry_ptr->mac_addr[2] == 0x5e);
+ 410   1      }
+ 411          
+ 412          static BOOL is_ipv6mc_entry(mac_tab_t xdata *mac_entry_ptr)
+ 413          {
+ 414   1          return (mac_entry_ptr->mac_addr[0] == 0x33) &&
+ 415   1                 (mac_entry_ptr->mac_addr[1] == 0x33);
+ 416   1      }
+ 417          
+ 418          
+ 419          static ushort h2_mac_type(mac_tab_t xdata *mac_entry_ptr)
+ 420          {
+ 421   1          if(is_ipmc_entry(mac_entry_ptr))
+C51 COMPILER V9.60.0.0   H2MACTAB                                                          11/30/2021 16:22:19 PAGE 8   
+
+ 422   1              return MAC_TYPE_IPV4_MC;
+ 423   1          if(is_ipv6mc_entry(mac_entry_ptr))
+ 424   1              return MAC_TYPE_IPV6_MC;
+ 425   1          return MAC_TYPE_NORMAL;
+ 426   1      }
+ 427          #endif // TRANSIT_UNMANAGED_MAC_OPER_GET || TRANSIT_UNMANAGED_MAC_OPER_SET
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1899    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----      84
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

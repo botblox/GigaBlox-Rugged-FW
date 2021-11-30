@@ -1,0 +1,220 @@
+C51 COMPILER V9.60.0.0   SYSUTIL                                                           11/30/2021 16:22:17 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE SYSUTIL
+OBJECT MODULE PLACED IN ..\obj\sysutil.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\main\sysutil.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winb
+                    -ond;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_
+                    -api\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\s
+                    -rc\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND 
+                    -PRINT(..\lst\sysutil.lst) TABS(2) OBJECT(..\obj\sysutil.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #include "h2io.h"
+  27          #include "vtss_common_os.h"
+  28          #include "vtss_api_base_regs.h"
+  29          #include "sysutil.h"
+  30          #include "timer.h"
+  31          #include "h2.h"
+  32          
+  33          #if !defined(NO_DEBUG_IF)
+  34          #include "print.h"
+  35          #include "version.h"
+  36          #endif // !NO_DEBUG_IF
+  37          
+  38          /*****************************************************************************
+  39           *
+  40           *
+  41           * Macros
+  42           *
+  43           *
+  44           ****************************************************************************/
+  45          
+  46          /*****************************************************************************
+  47           *
+  48           *
+  49           * Local data
+  50           *
+  51           *
+C51 COMPILER V9.60.0.0   SYSUTIL                                                           11/30/2021 16:22:17 PAGE 2   
+
+  52           ****************************************************************************/
+  53          
+  54          static BOOL g_suspend_enable = FALSE;
+  55          static sys_assert_event_t sys_assert_event = SYS_ASSERT_EVENT_OK;
+  56          
+  57          /*****************************************************************************
+  58           *
+  59           *
+  60           * Local Functions
+  61           *
+  62           *
+  63           ****************************************************************************/
+  64          
+  65          
+  66          /*****************************************************************************
+  67           *
+  68           *
+  69           * Public Functions
+  70           *
+  71           *
+  72           ****************************************************************************/
+  73          
+  74          
+  75          /**
+  76           * Reboot by forcing watchdog reset or utilizing any other reset feature.
+  77           */
+  78          void sysutil_reboot(void)
+  79          {
+  80   1          MMAP = 0xAF;
+  81   1          h2_chip_reset();
+  82   1          while (1) ;
+  83   1      }
+  84          
+  85          /**
+  86           * Hang forever with front LED blinking red.
+  87           */
+  88          void sysutil_hang (void)
+  89          {
+  90   1          u8 sys_assert_event_t = sysutil_assert_event_get();
+  91   1      
+  92   1          while (1) {
+  93   2              /* Hang function */
+  94   2              delay_1(1000);  // 1 second
+  95   2      
+  96   2      #if !defined(NO_DEBUG_IF)
+  97   2              print_str("%% System hanging (0x");
+  98   2              print_hex_b(sys_assert_event_t);
+  99   2      
+ 100   2              // Dump S/W version
+ 101   2              sysutil_show_sw_ver();
+ 102   2      
+ 103   2              // Dump Image build time
+ 104   2              sysutil_show_compile_date();
+ 105   2      #endif  // !NO_DEBUG_IF
+ 106   2          }
+ 107   1      }
+ 108          
+ 109          /**
+ 110           * Indicate error and initiate error recovery.
+ 111           */
+ 112          void sysutil_assert_event_set(sys_assert_event_t err_id)
+ 113          {
+C51 COMPILER V9.60.0.0   SYSUTIL                                                           11/30/2021 16:22:17 PAGE 3   
+
+ 114   1          /* Error code handler */
+ 115   1          sys_assert_event = err_id;
+ 116   1      }
+ 117          
+ 118          sys_assert_event_t sysutil_assert_event_get(void)
+ 119          {
+ 120   1          return sys_assert_event;
+ 121   1      }
+ 122          
+ 123          void sysutil_set_suspend(BOOL enable)
+ 124          {
+ 125   1          g_suspend_enable = enable;
+ 126   1      }
+ 127          
+ 128          BOOL sysutil_get_suspend(void)
+ 129          {
+ 130   1          return g_suspend_enable;
+ 131   1      }
+ 132          
+ 133          void sysutil_show_compile_date(void)
+ 134          {
+ 135   1          print_str("Build Date      : ");
+ 136   1          println_str(SW_COMPILE_DATE);
+ 137   1      }
+ 138          
+ 139          void sysutil_show_sw_ver(void)
+ 140          {
+ 141   1          // S/W version
+ 142   1          print_str("Software Version: ");
+ 143   1          println_str(SW_VERSION);
+ 144   1      
+ 145   1          // Code revision
+ 146   1          print_str("Code Revision   : ");
+ 147   1          println_str(CODE_REVISION);
+ 148   1      }
+ 149          
+ 150          void sysutil_show_hw_ver(void)
+ 151          {
+ 152   1          char hw_ver;
+ 153   1      
+ 154   1          print_str("HW Revision     : ");
+ 155   1          hw_ver = get_hw_version();
+ 156   1          print_ch(hw_ver);
+ 157   1          print_cr_lf();
+ 158   1      }
+ 159          
+ 160          void sysutil_show_chip_id(void)
+ 161          {
+ 162   1          u32 chip_id;
+ 163   1          u8  rev;
+ 164   1      
+ 165   1          H2_READ(VTSS_DEVCPU_GCB_CHIP_REGS_CHIP_ID, chip_id);
+ 166   1          rev = 'A'+ (char)VTSS_X_DEVCPU_GCB_CHIP_REGS_CHIP_ID_REV_ID(chip_id);
+ 167   1      
+ 168   1          // Chip Family
+ 169   1          print_str("Chip Family     : ");
+ 170   1        if ((VTSS_X_DEVCPU_GCB_CHIP_REGS_CHIP_ID_PART_ID(chip_id)&0x7510) == 0x7510) {
+ 171   2              print_str("751x");
+ 172   2              // Chip Revision
+ 173   2              print_str(" Rev.");
+ 174   2              print_ch(rev);
+ 175   2              print_cr_lf();
+C51 COMPILER V9.60.0.0   SYSUTIL                                                           11/30/2021 16:22:17 PAGE 4   
+
+ 176   2        }
+ 177   1        else {
+ 178   2              print_str(" Unknown.");
+ 179   2              print_cr_lf();
+ 180   2          }
+ 181   1      }
+ 182          
+ 183          /****************************************************************************/
+ 184          /*                                                                          */
+ 185          /*  End of file.                                                            */
+ 186          /*                                                                          */
+ 187          /****************************************************************************/
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    277    ----
+   CONSTANT SIZE    =    138    ----
+   XDATA SIZE       =      2       6
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

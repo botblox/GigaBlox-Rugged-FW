@@ -1,0 +1,156 @@
+Ocelot Unmanaged Software Release Notes for iCPU/8051 Software
+==============================================================
+
+Supported Chipset:
+    Ocelot (VSC7511, VSC7512)
+
+Supported Boards:
+    Four types (F11, F10P, F5, F4P) based on Reference Board PCB121.
+        . 'D' means device chip port.
+        . 'x' means unused port.
+    
+    - F11 : 11-port Giga switch. (8*1G Copper + 2*2.5G SFP + 1*1G Copper)
+            -------------------------------------------------
+            | 2(D5) | 4(D7) | 6(D1) | 8(D3) | 10(D10, 2.5G) |
+            -------------------------------------------------
+            | 1(D4) | 3(D6) | 5(D0) | 7(D2) |  9( D8, 2.5G) |    Copper (daughter board): 11(D9)
+            -------------------------------------------------
+    - F10P: 10-port Giga switch + a PCIe inteface. (8*1G Copper + 1*2.5G SFP + 1*1G SFP + 1*PCIe)
+            -------------------------------------------------
+            | 2(D5) | 4(D7) | 6(D1) | 8(D3) | 10(D9,   1G) |
+            -------------------------------------------------
+            | 1(D4) | 3(D6) | 5(D0) | 7(D2) |  9(D8, 2.5G) |   PCIe: (D10)
+            -------------------------------------------------
+    - F5  : 5-port Giga switch. (4*1G Copper + 1*1G Fiber)
+            -----------------------------------------
+            | x | x | 2(D1) | 4(D3) | Fiber: 5(D10) |
+            -----------------------------------------
+            | x | x | 1(D0) | 3(D2) |   x           |
+            -----------------------------------------
+    - F4P : 4-port Giga switch + a PCIe inteface. (4*1G Copper + 1*PCIe)
+            -------------------------
+            | x | x | 2(D1) | 4(D3) |
+            -------------------------
+            | x | x | 1(D0) | 3(D2) |    PCIe: (D10)
+            -------------------------
+
+Supported PHYs:
+     - MINI (VSC7511, VSC7512): F11/F10P/F5/F4P internal PHY port (1-4)
+     - ELISE (VSC8514): F11/F10P external PHY port (5-8)
+     - COBRA (VSC8211, VSC8221): F11 NPI port (11)
+
+The following SFP Modules have been verified by our SQA:
+    - SPT-SFP+C1,    10G SFP+ DAC 1M Passive Cable
+    - FTLF8519P3BNL, Finisar - 1000Base-SX 850nm MM 550m
+    - SFP-SX-M2002,  Excom   - 1000Base-SX 850nm MM 550m
+    - SFP-LH-S1010,  Excom   - 100Base-LX 1310nm SM 10km
+    - SFP-SX-M1002,  Excom   - 100Base-SX 1310nm MM  2km
+    - PS: Copper SFP module is unsupported.
+
+LEDs Definition: Based on SGPIO
+    - System LED
+        Blink GREEN when normal operation, Blink RED when port loop is detected.
+    - Port LEDs
+        Light GREEN-Activity when 1/2.5G link-up state, YELLOW(GREEN+RED)-Activity
+        when 10M/100M link-up state.
+
+Requirements:
+    - Console baudrate: 115200(8-N-1)
+    - Serial NOR Flash size 64 bytes at least.
+    - Make sure your Keil compiler tool support uVision4 since the project file is based on it.
+
+
+================================================================================
+
+Latest Version is on the top
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Version         1.0.1
+Image Name:
+    - Ocelot_Unmanaged-1.0.1_F11.bin
+      Features: L2 with default flow control disabled + Loop Guard + ActiPHY + E2E Transparent Clock
+    - Ocelot_Unmanaged-1.0.1_F5.bin
+      Features: L2 with default flow control disabled + Loop Guard + ActiPHY + E2E Transparent Clock
+
+Date            2017-08-28
+
+Changes:
+- Change: Update to MIT license
+- Add: Support Keil uVision5.
+
+Known Issues:
+1. the TestCenter fiber port will always advertise the 'Flow Control' capability
+   under the AN mode. Therefore we cannot test the flow control disabled feature
+   when connected with the TestCenter. (It works with SmartBit 6000C)
+
+--------------------------------------------------------------------------------
+Version         1.00
+Image Name:
+    - Ocelot-REL-1.00_F11_Unmanaged.bin
+      Features: L2 with default flow control disabled + Loop Guard + ActiPHY + E2E Transparent Clock
+    - Ocelot-REL-1.00_F5_Unmanaged.bin
+      Features: L2 with default flow control disabled + Loop Guard + ActiPHY + E2E Transparent Clock
+
+Date   : 2016-12-08
+
+Feature Brief:
+1. Basic L2 switch features:
+    - Auto negotiation mode is enabled on coppor ports.
+    - MAC address auto learning (up to 4,096 entries)
+    - MAC address auto ageing (300 seconds)
+    - Jumbo frame (up to 9,600 bytes)
+2. Link Aggregation and LACP:
+   The feature to bundle multiple ports (member ports) together into a single logical link.
+   An aggregation member set requires two ports at least.
+   The aggregation code is based on the following informations.
+    - SMAC
+    - DMAC
+    - Source and destination IPv4 address
+    - Source and destination TCP/UDP ports for IPv4 packets
+    - Source and destination TCP/UDP ports for IPv6 packets
+    - IPv6 Flow Label
+3. Loop Guard:
+   The feature to prevent the port loop from happening.
+   When a loop is detected, the loop ports will be disabled around 10 seconds
+   first and then back to the normal state after timeout. The above operations
+   are repeated if the loop is detected again.
+4. Power Saving - ActiPHY:
+   The feature to save power when port is being link-down status.
+5. IEEE 1518 - E2E Transparent Clock:
+   The feature to calculate residence time for a packet in the switch, the correction
+   packet field will be updated.
+   Three encapsulations are supported:
+    - PTP over ETHERNET
+    - PTP over IP
+    - PTP over IPv6
+
+Known Issues:
+1. the TestCenter fiber port will always advertise the 'Flow Control' capability
+   under the AN mode. Therefore we cannot test the flow control disabled feature
+   when connected with the TestCenter. (It works with SmartBit 6000C)
+
+Notes:
+1. NPI/PCIe modules:
+    - The NPI module is required for the images of F11 and F5.
+    - The PCIe module(PCB121-02P) is required for the images of F10P and F4P.
+      By default (without changing resistors), the board will be booting from PCIe.
+      The four resistors R26, R27, R29 and R32 on the PCIe module "MUST" be removed,
+      thus the board will be booting from the internal 8051 CPU and then the PCIe is
+      enabled through the unmanaged software.
+2. System MAC address:
+    - The MAC address table is empty by default on all reference boards.
+    - On F10P/F4P boards, if a new system MAC address is set via command
+      'CONFIG MAC xx:xx:xx:xx:xx:xx' then the new system MAC address will occupy one
+      static MAC entry in the MAC address table.
+    - When the system MAC address is existing in the MAC address table, the incoming
+      frame will be redirect to NPI port if its destination MAC address equals the
+      system MAC address and an internal frame header is added in front of the
+      original frame content.
+    - Make sure the system MAC is configured on the device before enabling LACP.
+3. Fiber port:
+    - Auto detect SFP media mode when module is plugged.
+    - The 1000Base SFP ports comply IEEE802.3 clause 37, no force/AN-Disable mode option.
+
+
+--------------------------------------------------------------------------------

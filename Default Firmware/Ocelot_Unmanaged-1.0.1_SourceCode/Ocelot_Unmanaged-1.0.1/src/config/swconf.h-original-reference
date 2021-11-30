@@ -1,0 +1,280 @@
+/*
+
+ Copyright (c) 2017 Microsemi Corporation "Microsemi".
+
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+*/
+
+#ifndef __SWCONF_H__
+#define __SWCONF_H__
+
+#ifndef __INCLUDE_CONFIGS__
+#error "swconf.h is for common.h only"
+#endif
+
+/*
+ * Pick your own protocols and features.
+ */
+
+
+/****************************************************************************
+ * Enable the switch initial procedure based on verification team's source code 
+ ****************************************************************************/
+#if defined(VTSS_ARCH_OCELOT)
+// Execute the initial procedure that provided by verification team
+// Undefined FERRET_MAIN_ENABLE now since we done the task now.
+// #define FERRET_MAIN_ENABLE
+#endif // VTSS_ARCH_OCELOT
+
+/****************************************************************************
+ * SNMP
+ ****************************************************************************/
+#define TRANSIT_SNMP                        0
+
+/****************************************************************************
+ * LACP
+ ****************************************************************************/
+#define TRANSIT_LAG                         0
+
+#if !defined(BRINGUP) && (defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F5) || defined(FERRET_F4P))
+    #define VTSS_FEATURE_LACP                   1
+    //Enable LAG auotmatically when LACP enalbed
+    #if VTSS_FEATURE_LACP && !TRANSIT_LAG
+    #undef TRANSIT_LAG
+    #define TRANSIT_LAG                         1
+    #endif // VTSS_FEATURE_LACP
+#else
+    #define VTSS_FEATURE_LACP                   0
+#endif
+
+/****************************************************************************
+ * LLDP - IEEE802.1AB
+ ****************************************************************************/
+#if defined(LUTON26_L10) || defined(LUTON26_L16) || defined(LUTON26_L25)
+#define TRANSIT_LLDP                        0 /* 1 */    /* Not implemented yet */
+#define TRANSIT_LLDP_REDUCED                0 /* 1 */    /* Not implemented yet */
+#else
+#define TRANSIT_LLDP                        0
+#define TRANSIT_LLDP_REDUCED                0
+#endif
+
+
+/****************************************************************************
+ * EEE
+ ****************************************************************************/
+#if defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F5) || defined(FERRET_F4P) || \
+    defined(LUTON26_L10) || defined(LUTON26_L16) || defined(LUTON26_L25)
+#define TRANSIT_EEE                         0 /* 1 */    /* Not implemented yet */
+#define TRANSIT_EEE_LLDP                    0 /* 1 */    /* Not implemented yet */ /* Define this if EEE shall support changes by LLDP */
+#else
+#define TRANSIT_EEE                         0
+#define TRANSIT_EEE_LLDP                    0 /* Define this if EEE shall support changes by LLDP */
+#endif
+
+#if TRANSIT_EEE
+#if !TRANSIT_LLDP
+/* EEE depends on LLDP */
+#error "TRANSIT_EEE depends on TRANSIT_LLDP, please set in swconf.h"
+#endif
+#endif /* TRANSIT_EEE */
+
+
+/****************************************************************************
+ * VeriPHY
+ ****************************************************************************/
+#if defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F5) || defined(FERRET_F4P) || \
+    defined(LUTON26_L10) || defined(LUTON26_L16) || defined(LUTON26_L25)
+#define TRANSIT_VERIPHY                     0 /* 1 */    /* Not implemented yet */
+#else
+#define TRANSIT_VERIPHY                     0
+#endif
+
+/****************************************************************************
+ * ActiPHY
+ ****************************************************************************/
+#if defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F5) || defined(FERRET_F4P) // Ferret, TODO
+#define TRANSIT_ACTIPHY                     0 /* 1 */    /* Not implemented yet */
+#else
+#define TRANSIT_ACTIPHY                     0
+#endif
+
+/****************************************************************************
+ * Perfect Reach
+ ****************************************************************************/
+/* Set PERFECT_REACH mode at compile time */
+#if defined(LUTON26_L10) || defined(LUTON26_L16) || defined(LUTON26_L25)
+#define PERFECT_REACH_LNK_UP                0 /* 1 */    /* Not implemented yet */
+#define PERFECT_REACH_LNK_DN                0 /* 1 */    /* Not implemented yet */
+#else
+#define PERFECT_REACH_LNK_UP                0
+#define PERFECT_REACH_LNK_DN                0
+#endif
+
+#if PERFECT_REACH_LNK_UP && PERFECT_REACH_LNK_DN
+/*
+ * User can configure Perfect Reach at runtime
+ */
+#define PERFECT_REACH_MANAGEMENT            1
+#else
+#define PERFECT_REACH_MANAGEMENT            0
+#endif /* PERFECT_REACH_LNK_UP && PERFECT_REACH_LNK_DN */
+
+
+/****************************************************************************
+ * Enable/Disable Loop Detection / Protection
+ ****************************************************************************/
+#define TRANSIT_LOOPDETECT                  0 /* 1 */    /* Not implemented yet */
+
+
+/****************************************************************************
+ * Allow/Disable BPDU pass through the switch.
+ ****************************************************************************/
+#define TRANSIT_BPDU_PASS_THROUGH           0  //James: need to consider to trap lldp/lacp only. now all BPDU pkts will go to CPU
+
+
+/****************************************************************************
+ *
+ *
+ * Debug Features
+ *
+ *
+ ****************************************************************************/
+
+
+/****************************************************************************
+ * FTIME
+ ****************************************************************************/
+#ifndef VTSS_FEATURE_FTIME
+/**
+ * Set VTSS_FEATURE_FTIME to 1 to enable system uptime tracking and provide
+ * an API ftime() to get the uptime of the system.
+ *
+ * @note ftime is a 4.2BSD, POSIX.1-2001 API.
+ */
+#define VTSS_FEATURE_FTIME                  0
+#endif
+
+
+/****************************************************************************
+ * Debug - Disable asserts and trace: use #undef to enable asserts and trace.
+ ****************************************************************************/
+// Define NDEBUG to disable asserts and trace.
+#define NDEBUG
+
+
+/****************************************************************************
+ * Disable Debug Interfaces - UART, Web upgrade
+ ****************************************************************************/
+//#define NO_DEBUG_IF /* Define NO_DEBUG_IF to disable the UIs debug message */
+
+#ifdef NO_DEBUG_IF
+#undef  UNMANAGED_REDUCED_DEBUG_IF
+#define UNMANAGED_LLDP_DEBUG_IF             0
+#define UNMANAGED_EEE_DEBUG_IF              0
+#define UNMANAGED_FAN_DEBUG_IF              0
+#define UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF  0
+#define UNMANAGED_PORT_STATISTICS_IF        0
+#else
+/* In case debug is supported, users are free to define:
+ * UNMANAGED_REDUCED_DEBUG_IF -- define if only limited debug i/f is expected
+ * LUTON_UNMANAGED_SWUP -- set if firmware upgrade is expected
+ */
+//#define UNMANAGED_REDUCED_DEBUG_IF
+#define UNMANAGED_PORT_MAPPINGS             1   // Enable print APIs in print.c
+#define UNMANAGED_LLDP_DEBUG_IF             0
+#define UNMANAGED_EEE_DEBUG_IF              0
+#define UNMANAGED_FAN_DEBUG_IF              0
+#define UNMANAGED_TRANSIT_VERIPHY_DEBUG_IF  0
+#define UNMANAGED_PORT_STATISTICS_IF        0
+#endif
+
+
+#if defined(LUTON26_L10) || defined(LUTON26_L16) || defined(LUTON26_L25)
+#define LUTON_UNMANAGED_SWUP                0 /* 1 */    /* Not implemented yet */
+#define LUTON_UNMANAGED_CONF_IF             1
+#define LUTON_UNMANAGED_SPI_FLASH           0 /* 1 */    /* Not implemented yet */
+#elif defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F5) || defined(FERRET_F4P)
+#define LUTON_UNMANAGED_SWUP                0
+#define LUTON_UNMANAGED_CONF_IF             1
+#define LUTON_UNMANAGED_SPI_FLASH           0
+#else
+#define LUTON_UNMANAGED_SWUP                0
+#define LUTON_UNMANAGED_CONF_IF             0
+#define LUTON_UNMANAGED_SPI_FLASH           0
+#endif /* BRINGUP */
+
+/****************************************************************************
+ *
+ *
+ * Obsolete Features
+ *
+ *
+ ****************************************************************************/
+
+
+/****************************************************************************
+ * FAN S/W Control
+ ****************************************************************************/
+#define  TRANSIT_FAN_CONTROL                0 /* FAN specifications is defined
+                                                 in fan_custom_api.h */
+
+
+/****************************************************************************
+ * Thermal Control - This is de-speced from VSC7420, VSC7421, VSC7422
+ ****************************************************************************/
+#define  TRANSIT_THERMAL                    0
+
+
+/****************************************************************************
+ * PoE - Not supported right now.
+ ****************************************************************************/
+#define TRANSIT_POE                         0
+#define TRANSIT_POE_LLDP                    0
+
+#if TRANSIT_POE_LLDP
+#if (TRANSIT_LLDP == 0)
+#error "Please set TRANSIT_LLDP 1 in swconf.h"
+#endif
+#endif /* TRANSIT_POE_LLDP */
+
+
+/****************************************************************************
+ * realated compling flags for LACP/trunk driver. Consider to remove later. !!! 
+ ****************************************************************************/
+
+/* Set if Static trunk should load balancing when RSTP enabled */
+#define TRANSIT_RSTP_TRUNK_COWORK 0
+
+/* IEEE 802.1w protocol */
+#define VTSS_FEATURE_RSTP 0
+
+#define TRANSIT_DOT1X 0
+
+
+
+
+
+#endif /* __SWCONF_H__ */
+
+/****************************************************************************/
+/*                                                                          */
+/*  End of file.                                                            */
+/*                                                                          */
+/****************************************************************************/

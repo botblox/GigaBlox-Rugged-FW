@@ -1,0 +1,354 @@
+A51 MACRO ASSEMBLER  MISC3                                                                11/30/2021 16:22:26 PAGE     1
+
+
+MACRO ASSEMBLER A51 V8.2.7.0
+OBJECT MODULE PLACED IN ..\obj\misc3.obj
+ASSEMBLER INVOKED BY: C:\Keil_v5\C51\BIN\A51.EXE ..\src\util\misc3.a51 INCDIR(..\src\config) SET(LARGE) DEBUG PRINT(..\l
+                      st\misc3.lst) OBJECT(..\obj\misc3.obj) EP
+
+LOC  OBJ            LINE     SOURCE
+
+                       1     ;*
+                       2     ;*
+                       3     ;* Copyright (c) 2017 Microsemi Corporation "Microsemi".
+                       4     ;*
+                       5     ;* Permission is hereby granted, free of charge, to any person obtaining a copy
+                       6     ;* of this software and associated documentation files (the "Software"), to deal
+                       7     ;* in the Software without restriction, including without limitation the rights
+                       8     ;* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+                       9     ;* copies of the Software, and to permit persons to whom the Software is
+                      10     ;* furnished to do so, subject to the following conditions:
+                      11     ;*
+                      12     ;* The above copyright notice and this permission notice shall be included in all
+                      13     ;* copies or substantial portions of the Software.
+                      14     ;*
+                      15     ;* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+                      16     ;* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+                      17     ;* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+                      18     ;* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+                      19     ;* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+                      20     ;* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                      21     ;* SOFTWARE.
+                      22     ;*
+                      23     ;*
+                      24     ;*
+                      25     
+                      26     $nomod51 
+                      27     ;$include (REG52.INC)
+                +1    28     ;-------------------------------------------------------------------------------
+                +1    29     ; Copyright 1995-1996 KEIL Software, Inc.
+                +1    30     ; 8052 Processor Declarations
+                +1    31     ;-------------------------------------------------------------------------------
+                +1    32  +1 $save 
+                +1   133  +1 $restore 
+                +1   134     
+                     135     
+                     136     
+                     137     NAME    MISCUTIL3
+                     138     
+                     139     PUBLIC  _mac_cmp
+                     140     PUBLIC  _ip_cmp
+                     141     PUBLIC  _mac_copy
+                     142     PUBLIC  _ip_copy
+                     143     PUBLIC  _mem_cmp
+                     144     PUBLIC  _mem_copy
+                     145     PUBLIC  _mem_set
+                     146     
+                     147     PROG    SEGMENT CODE
+                     148     
+----                 149             RSEG    PROG
+                     150     
+                     151     ;* ************************************************************************ */
+                     152     ; char mac_cmp (uchar xdata *mac_addr_1, uchar xdata *mac_addr_2) small
+0000                 153     _mac_cmp:
+                     154     ;* ------------------------------------------------------------------------ --
+                     155     ;* Purpose     : Compare two mac addresses.
+                     156     ;* Remarks     : Return -1, if mac_addr_1 < mac_addr_2.
+                     157     ;*               Return  1, if mac_addr_1 > mac_addr_2
+A51 MACRO ASSEMBLER  MISC3                                                                11/30/2021 16:22:26 PAGE     2
+
+                     158     ;*               Return  0, if mac_addr_1 == mac_addr_2
+                     159     ;* Restrictions:
+                     160     ;* See also    :
+                     161     ;* Example     :
+                     162     ; * ************************************************************************ */
+                     163     
+0000 7906            164             mov     r1, #6          ; Number of bytes to compare
+                     165     
+0002 8E83            166     L1_1:   mov     dph, r6         ; Get pointer to byte in first address
+0004 8F82            167             mov     dpl, r7
+0006 E0              168             movx    a, @dptr        ; Get byte from first address
+0007 FA              169             mov     r2, a           ; Save byte temporary
+0008 A3              170             inc     dptr            ; Point to next byte in first address
+0009 AE83            171             mov     r6, dph         ; Save pointer temporarily
+000B AF82            172             mov     r7, dpl
+                     173     
+000D 8C83            174             mov     dph, r4         ; Get pointer to byte in second address
+000F 8D82            175             mov     dpl, r5
+0011 E0              176             movx    a, @dptr        ; Get byte from second address
+0012 A3              177             inc     dptr            ; Point to next byte in second address
+0013 AC83            178             mov     r4, dph         ; Save pointer temporarily
+0015 AD82            179             mov     r5, dpl
+                     180     
+0017 CA              181             xch     a, r2
+0018 C3              182             clr     c
+0019 9A              183             subb    a, r2           ; Compare the two bytes
+001A 7005            184             jnz     L1_2            ; If different, go check sign
+                     185     
+001C D9E4            186             djnz    r1, L1_1        ; Check if more bytes to compare
+001E 7F00            187             mov     r7, #0          ; All bytes equal, return 0
+0020 22              188             ret
+                     189     
+0021 4003            190     L1_2:   jc      L1_3            ; If first address > second address
+0023 7F01            191             mov     r7, #1          ; then return 1
+0025 22              192             ret
+0026 7FFF            193     L1_3:   mov     r7, #0FFH       ; else return -1
+0028 22              194             ret
+                     195     
+                     196     ;* ************************************************************************ */
+                     197     ; char ip_cmp (uchar xdata *ip_addr_1, uchar xdata *ip_addr_2) small
+0029                 198     _ip_cmp:
+                     199     ;* ------------------------------------------------------------------------ --
+                     200     ;* Purpose     : Compare two ip addresses.
+                     201     ;* Remarks     : Return -1, if ip_addr_1 < ip_addr_2.
+                     202     ;*               Return  1, if ip_addr_1 > ip_addr_2
+                     203     ;*               Return  0, if ip_addr_1 == ip_addr_2
+                     204     ;* Restrictions:
+                     205     ;* See also    :
+                     206     ;* Example     :
+                     207     ; * ************************************************************************ */
+                     208     
+0029 7904            209             mov     r1, #4          ; Number of bytes to compare
+002B 80D5            210             jmp     L1_1
+                     211     
+                     212     ;* ************************************************************************ */
+                     213     ; void mac_copy (uchar xdata *dst_mac_addr, uchar xdata *src_mac_addr) small
+002D                 214     _mac_copy:
+                     215     ;* ------------------------------------------------------------------------ --
+                     216     ;* Purpose     : Copy a mac address.
+                     217     ;* Remarks     : 
+                     218     ;* Restrictions:
+                     219     ;* See also    :
+                     220     ;* Example     :
+                     221     ; * ************************************************************************ */
+                     222     
+002D 7906            223             mov     r1, #6          ; Number of bytes to copy
+A51 MACRO ASSEMBLER  MISC3                                                                11/30/2021 16:22:26 PAGE     3
+
+                     224     
+002F 8C83            225     L3_1:   mov     dph, r4         ; Get pointer to byte in source address
+0031 8D82            226             mov     dpl, r5
+0033 E0              227             movx    a, @dptr        ; Read byte from source address
+0034 A3              228             inc     dptr            ; Point to next byte in source address
+0035 AC83            229             mov     r4, dph         ; Save pointer temporarily
+0037 AD82            230             mov     r5, dpl
+                     231     
+0039 8E83            232             mov     dph, r6         ; Get pointer to byte in destination address
+003B 8F82            233             mov     dpl, r7
+003D F0              234             movx    @dptr, a        ; Write byte from source address
+003E A3              235             inc     dptr            ; Point to next byte in destination address
+003F AE83            236             mov     r6, dph         ; Save pointer temporarily
+0041 AF82            237             mov     r7, dpl
+                     238     
+0043 D9EA            239             djnz    r1, L3_1        ; Check if copy completed
+0045 22              240             ret
+                     241     
+                     242     ;* ************************************************************************ */
+                     243     ; void ip_copy (uchar xdata *dst_ip_addr, uchar xdata *src_ip_addr) small
+0046                 244     _ip_copy:
+                     245     ;* ------------------------------------------------------------------------ --
+                     246     ;* Purpose     : Copy an ip address.
+                     247     ;* Remarks     : 
+                     248     ;* Restrictions:
+                     249     ;* See also    :
+                     250     ;* Example     :
+                     251     ; * ************************************************************************ */
+                     252     
+0046 7904            253             mov     r1, #4          ; Number of bytes to copy
+0048 80E5            254             jmp     L3_1
+                     255     
+                     256     ;* ************************************************************************ */
+                     257     ; uchar mem_cmp (uchar xdata *dst_mem_addr, uchar xdata *src_mem_addr, uchar size) small
+004A                 258     _mem_cmp:
+                     259     ;* ------------------------------------------------------------------------ --
+                     260     ;* Purpose     : memory compare.
+                     261     ;* Remarks     : 
+                     262     ;* Restrictions: length must be less than 256, and compare address is xdata
+                     263     ;* See also    :
+                     264     ;* Example     :
+                     265     ; * ************************************************************************ */
+                     266     
+004A EB              267             mov     a, r3
+004B F9              268             mov     r1, a           ; Number of bytes to compare
+004C 80B4            269             jmp     L1_1
+                     270     
+                     271     ;* ************************************************************************ */
+                     272     ; uchar mem_copy (uchar xdata *dst_mem_addr, uchar xdata *src_mem_addr, uchar size) small
+004E                 273     _mem_copy:
+                     274     ;* ------------------------------------------------------------------------ --
+                     275     ;* Purpose     : memory compare.
+                     276     ;* Remarks     : 
+                     277     ;* Restrictions: length must be less than 256, and memory address is xdata
+                     278     ;* See also    :
+                     279     ;* Example     :
+                     280     ; * ************************************************************************ */
+                     281     
+004E EB              282             mov     a, r3
+004F F9              283             mov     r1, a           ; Number of bytes to copy
+0050 80DD            284             jmp     L3_1
+                     285     
+                     286     ;* ************************************************************************ */
+                     287     ; uchar mem_set (uchar xdata *dst_mem_addr, uchar value, uchar size) small
+0052                 288     _mem_set:
+                     289     ;* ------------------------------------------------------------------------ --
+A51 MACRO ASSEMBLER  MISC3                                                                11/30/2021 16:22:26 PAGE     4
+
+                     290     ;* Purpose     : memory compare.
+                     291     ;* Remarks     : 
+                     292     ;* Restrictions: length must be less than 256, and memory address is xdata
+                     293     ;* See also    :
+                     294     ;* Example     :
+                     295     ; * ************************************************************************ */
+                     296     
+0052 EB              297             mov     a, r3
+0053 F9              298             mov     r1, a           ; Number of bytes to copy
+0054 ED              299             mov     a, r5           ; Get the byte to store
+0055 8E83            300     L4_1:   mov     dph, r6         ; Get pointer to byte in destination address
+0057 8F82            301             mov     dpl, r7
+0059 F0              302             movx    @dptr, a        ; Write byte from source address
+005A A3              303             inc     dptr            ; Point to next byte in destination address
+005B AE83            304             mov     r6, dph         ; Save pointer temporarily
+005D AF82            305             mov     r7, dpl
+                     306     
+005F D9F4            307             djnz    r1, L4_1        ; Check if copy completed
+0061 22              308             ret
+                     309             
+                     310             END
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+A51 MACRO ASSEMBLER  MISC3                                                                11/30/2021 16:22:26 PAGE     5
+
+SYMBOL TABLE LISTING
+------ ----- -------
+
+
+N A M E             T Y P E  V A L U E   ATTRIBUTES
+
+AC . . . . . . . .  B ADDR   00D0H.6 A   
+ACC. . . . . . . .  D ADDR   00E0H   A   
+B. . . . . . . . .  D ADDR   00F0H   A   
+CP_RL2 . . . . . .  B ADDR   00C8H.0 A   
+CY . . . . . . . .  B ADDR   00D0H.7 A   
+C_T2 . . . . . . .  B ADDR   00C8H.1 A   
+DPH. . . . . . . .  D ADDR   0083H   A   
+DPL. . . . . . . .  D ADDR   0082H   A   
+EA . . . . . . . .  B ADDR   00A8H.7 A   
+ES . . . . . . . .  B ADDR   00A8H.4 A   
+ET0. . . . . . . .  B ADDR   00A8H.1 A   
+ET1. . . . . . . .  B ADDR   00A8H.3 A   
+ET2. . . . . . . .  B ADDR   00A8H.5 A   
+EX0. . . . . . . .  B ADDR   00A8H.0 A   
+EX1. . . . . . . .  B ADDR   00A8H.2 A   
+EXEN2. . . . . . .  B ADDR   00C8H.3 A   
+EXF2 . . . . . . .  B ADDR   00C8H.6 A   
+F0 . . . . . . . .  B ADDR   00D0H.5 A   
+IE . . . . . . . .  D ADDR   00A8H   A   
+IE0. . . . . . . .  B ADDR   0088H.1 A   
+IE1. . . . . . . .  B ADDR   0088H.3 A   
+INT0 . . . . . . .  B ADDR   00B0H.2 A   
+INT1 . . . . . . .  B ADDR   00B0H.3 A   
+IP . . . . . . . .  D ADDR   00B8H   A   
+IT0. . . . . . . .  B ADDR   0088H.0 A   
+IT1. . . . . . . .  B ADDR   0088H.2 A   
+L1_1 . . . . . . .  C ADDR   0002H   R   SEG=PROG
+L1_2 . . . . . . .  C ADDR   0021H   R   SEG=PROG
+L1_3 . . . . . . .  C ADDR   0026H   R   SEG=PROG
+L3_1 . . . . . . .  C ADDR   002FH   R   SEG=PROG
+L4_1 . . . . . . .  C ADDR   0055H   R   SEG=PROG
+MISCUTIL3. . . . .  N NUMB   -----       
+OV . . . . . . . .  B ADDR   00D0H.2 A   
+P. . . . . . . . .  B ADDR   00D0H.0 A   
+P0 . . . . . . . .  D ADDR   0080H   A   
+P1 . . . . . . . .  D ADDR   0090H   A   
+P2 . . . . . . . .  D ADDR   00A0H   A   
+P3 . . . . . . . .  D ADDR   00B0H   A   
+PCON . . . . . . .  D ADDR   0087H   A   
+PROG . . . . . . .  C SEG    0062H       REL=UNIT
+PS . . . . . . . .  B ADDR   00B8H.4 A   
+PSW. . . . . . . .  D ADDR   00D0H   A   
+PT0. . . . . . . .  B ADDR   00B8H.1 A   
+PT1. . . . . . . .  B ADDR   00B8H.3 A   
+PT2. . . . . . . .  B ADDR   00B8H.5 A   
+PX0. . . . . . . .  B ADDR   00B8H.0 A   
+PX1. . . . . . . .  B ADDR   00B8H.2 A   
+RB8. . . . . . . .  B ADDR   0098H.2 A   
+RCAP2H . . . . . .  D ADDR   00CBH   A   
+RCAP2L . . . . . .  D ADDR   00CAH   A   
+RCLK . . . . . . .  B ADDR   00C8H.5 A   
+RD . . . . . . . .  B ADDR   00B0H.7 A   
+REN. . . . . . . .  B ADDR   0098H.4 A   
+RI . . . . . . . .  B ADDR   0098H.0 A   
+RS0. . . . . . . .  B ADDR   00D0H.3 A   
+RS1. . . . . . . .  B ADDR   00D0H.4 A   
+RXD. . . . . . . .  B ADDR   00B0H.0 A   
+SBUF . . . . . . .  D ADDR   0099H   A   
+SCON . . . . . . .  D ADDR   0098H   A   
+SM0. . . . . . . .  B ADDR   0098H.7 A   
+A51 MACRO ASSEMBLER  MISC3                                                                11/30/2021 16:22:26 PAGE     6
+
+SM1. . . . . . . .  B ADDR   0098H.6 A   
+SM2. . . . . . . .  B ADDR   0098H.5 A   
+SP . . . . . . . .  D ADDR   0081H   A   
+T0 . . . . . . . .  B ADDR   00B0H.4 A   
+T1 . . . . . . . .  B ADDR   00B0H.5 A   
+T2 . . . . . . . .  B ADDR   0090H.0 A   
+T2CON. . . . . . .  D ADDR   00C8H   A   
+T2EX . . . . . . .  B ADDR   0090H.1 A   
+TB8. . . . . . . .  B ADDR   0098H.3 A   
+TCLK . . . . . . .  B ADDR   00C8H.4 A   
+TCON . . . . . . .  D ADDR   0088H   A   
+TF0. . . . . . . .  B ADDR   0088H.5 A   
+TF1. . . . . . . .  B ADDR   0088H.7 A   
+TF2. . . . . . . .  B ADDR   00C8H.7 A   
+TH0. . . . . . . .  D ADDR   008CH   A   
+TH1. . . . . . . .  D ADDR   008DH   A   
+TH2. . . . . . . .  D ADDR   00CDH   A   
+TI . . . . . . . .  B ADDR   0098H.1 A   
+TL0. . . . . . . .  D ADDR   008AH   A   
+TL1. . . . . . . .  D ADDR   008BH   A   
+TL2. . . . . . . .  D ADDR   00CCH   A   
+TMOD . . . . . . .  D ADDR   0089H   A   
+TR0. . . . . . . .  B ADDR   0088H.4 A   
+TR1. . . . . . . .  B ADDR   0088H.6 A   
+TR2. . . . . . . .  B ADDR   00C8H.2 A   
+TXD. . . . . . . .  B ADDR   00B0H.1 A   
+WR . . . . . . . .  B ADDR   00B0H.6 A   
+_IP_CMP. . . . . .  C ADDR   0029H   R   SEG=PROG
+_IP_COPY . . . . .  C ADDR   0046H   R   SEG=PROG
+_MAC_CMP . . . . .  C ADDR   0000H   R   SEG=PROG
+_MAC_COPY. . . . .  C ADDR   002DH   R   SEG=PROG
+_MEM_CMP . . . . .  C ADDR   004AH   R   SEG=PROG
+_MEM_COPY. . . . .  C ADDR   004EH   R   SEG=PROG
+_MEM_SET . . . . .  C ADDR   0052H   R   SEG=PROG
+
+
+REGISTER BANK(S) USED: 0 
+
+
+ASSEMBLY COMPLETE.  0 WARNING(S), 0 ERROR(S)

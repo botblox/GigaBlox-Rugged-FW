@@ -1,0 +1,665 @@
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE LEDTSK
+OBJECT MODULE PLACED IN ..\obj\ledtsk.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\led\ledtsk.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winbon
+                    -d;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_ap
+                    -i\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\src
+                    -\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND PR
+                    -INT(..\lst\ledtsk.lst) TABS(2) OBJECT(..\obj\ledtsk.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #include "vtss_api_base_regs.h"
+  27          #include "h2gpios.h"
+  28          #include "h2io.h"
+  29          #include "hwport.h"
+  30          #include "phytsk.h"
+  31          #include "main.h"
+  32          #include "phydrv.h"
+  33          #include "h2stats.h"
+  34          #include "ledtsk.h"
+  35          #include "string.h"
+  36          
+  37          #if defined(LEDTSK_DEBUG_ENABLE)
+              #include "print.h"
+              #endif /* LEDTSK_DEBUG_ENABLE */
+  40          
+  41          
+  42          /*****************************************************************************
+  43           *
+  44           *
+  45           * Defines
+  46           *
+  47           *
+  48           *
+  49           ****************************************************************************/
+  50          
+  51          /*****************************************************************************
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 2   
+
+  52           *
+  53           *
+  54           * Typedefs and enums
+  55           *
+  56           *
+  57           *
+  58           ****************************************************************************/
+  59          typedef enum {
+  60              VTSS_LED_TOWER_MODE_LINK_SPEED,     /**< Green: 1G link/activity; Orange: 10/100 link/activity */
+  61              VTSS_LED_TOWER_MODE_DUPLEX,         /**< Green: FDX; Orange: HDX + Collisions */
+  62              VTSS_LED_TOWER_MODE_LINK_STATUS,    /**< Green: Link/activity; Orange: port disabled/errors */
+  63              VTSS_LED_TOWER_MODE_POWER_SAVE,     /**< Disabled to save power */
+  64              VTSS_LED_TOWER_MODE_END
+  65          } vtss_led_tower_mode_t;
+  66          
+  67          /*****************************************************************************
+  68           *
+  69           *
+  70           * Prototypes for local functions
+  71           *
+  72           *
+  73           *
+  74           ****************************************************************************/
+  75          static void _led_update_port_by_tower_mode();
+  76          
+  77          /*****************************************************************************
+  78           *
+  79           *
+  80           * Local data
+  81           *
+  82           *
+  83           *
+  84           ****************************************************************************/
+  85          
+  86          #if FRONT_LED_PRESENT
+  87          
+  88          static uchar led_mode_timer;
+  89          static vtss_led_tower_mode_t curr_tower_mode = VTSS_LED_TOWER_MODE_LINK_SPEED; /* Default twoer mode */
+  90          static BOOL is_refresh_led = FALSE;
+  91          static char led_port_event[NO_OF_BOARD_PORTS + 1][VTSS_LED_EVENT_END];
+  92          static char curr_led_port_event[NO_OF_BOARD_PORTS + 1];
+  93          
+  94          #if UNMANAGED_PORT_STATISTICS_IF && defined(HW_LED_TOWER_PRESENT)
+              static ulong col_cnt[NO_OF_BOARD_PORTS + 1]; /* plus 1 for system LED */
+              #endif // UNMANAGED_PORT_STATISTICS_IF && HW_LED_TOWER_PRESENT
+  97          
+  98          
+  99          // The port_LED SGPIO mapping is different with system_LED mapping on some specific board. i.e. Ferret ref
+             -erence boards
+ 100          // So we have 'is_front_port' parameter to distinguish it.
+ 101          static void _led_mode_set(uchar sgpio_no, vtss_led_mode_type_t mode)
+ 102          {
+ 103   1          vtss_sgpio_mode_t sgpio_bit_0_mode, sgpio_bit_1_mode;
+ 104   1          bool valid_mode = TRUE;
+ 105   1      
+ 106   1          switch(mode) {
+ 107   2      #if defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F5) || defined(FERRET_F4P)
+ 108   2          // Light system LED (needs to refer to hardware schematic)
+ 109   2          // bit[1:0] 01 => green, 10 => red, 11 => off
+ 110   2          case VTSS_LED_MODE_OFF:
+ 111   2              sgpio_bit_1_mode = VTSS_SGPIO_MODE_ON;
+ 112   2              sgpio_bit_0_mode = VTSS_SGPIO_MODE_ON;
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 3   
+
+ 113   2              break;
+ 114   2          case VTSS_LED_MODE_ON_RED:
+ 115   2              sgpio_bit_1_mode = VTSS_SGPIO_MODE_ON;
+ 116   2              sgpio_bit_0_mode = VTSS_SGPIO_MODE_OFF;
+ 117   2              break;
+ 118   2          case VTSS_LED_MODE_BLINK_RED:
+ 119   2              sgpio_bit_1_mode = VTSS_SGPIO_MODE_ON;
+ 120   2              sgpio_bit_0_mode = VTSS_SGPIO_MODE_BL_0;
+ 121   2              break;
+ 122   2          case VTSS_LED_MODE_ON_GREEN:
+ 123   2              sgpio_bit_1_mode = VTSS_SGPIO_MODE_OFF;
+ 124   2              sgpio_bit_0_mode = VTSS_SGPIO_MODE_ON;
+ 125   2              break;
+ 126   2          case VTSS_LED_MODE_BLINK_GREEN:
+ 127   2              sgpio_bit_1_mode = VTSS_SGPIO_MODE_BL_0;
+ 128   2              sgpio_bit_0_mode = VTSS_SGPIO_MODE_ON;
+ 129   2              break;
+ 130   2          case VTSS_LED_MODE_LINK_ACTIVITY_GREEN:
+ 131   2              sgpio_bit_1_mode = VTSS_SGPIO_MODE_LACT_0;
+ 132   2              sgpio_bit_0_mode = VTSS_SGPIO_MODE_ON;
+ 133   2              break;
+ 134   2          case VTSS_LED_MODE_ON_YELLOW:
+ 135   2              sgpio_bit_1_mode = VTSS_SGPIO_MODE_OFF;
+ 136   2              sgpio_bit_0_mode = VTSS_SGPIO_MODE_OFF;
+ 137   2              break;
+ 138   2          case VTSS_LED_MODE_BLINK_YELLOW:
+ 139   2              sgpio_bit_1_mode = sgpio_bit_0_mode = VTSS_SGPIO_MODE_BL_0;
+ 140   2              break;
+ 141   2          case VTSS_LED_MODE_LINK_ACTIVITY_YELLOW:
+ 142   2              sgpio_bit_1_mode = sgpio_bit_0_mode = VTSS_SGPIO_MODE_LACT_0;
+ 143   2              break;
+ 144   2      
+ 145   2      #elif defined(VTSS_ARCH_LUTON26)
+                  case VTSS_LED_MODE_OFF:
+                      sgpio_bit_1_mode = sgpio_bit_0_mode = VTSS_SGPIO_MODE_OFF;
+                      break;
+                  case VTSS_LED_MODE_ON_RED:
+                      sgpio_bit_1_mode = VTSS_SGPIO_MODE_OFF;
+                      sgpio_bit_0_mode = VTSS_SGPIO_MODE_ON;
+                      break;
+                  case VTSS_LED_MODE_BLINK_RED:
+                      sgpio_bit_1_mode = VTSS_SGPIO_MODE_OFF;
+                      sgpio_bit_0_mode = VTSS_SGPIO_MODE_BL_1;
+                      break;
+                  case VTSS_LED_MODE_ON_GREEN:
+                      sgpio_bit_1_mode = VTSS_SGPIO_MODE_ON;
+                      sgpio_bit_0_mode = VTSS_SGPIO_MODE_OFF;
+                      break;
+                  case VTSS_LED_MODE_BLINK_GREEN:
+                      sgpio_bit_1_mode = VTSS_SGPIO_MODE_BL_1;
+                      sgpio_bit_0_mode = VTSS_SGPIO_MODE_OFF;
+                      break;
+                  case VTSS_LED_MODE_LINK_ACTIVITY_GREEN:
+                      sgpio_bit_1_mode = VTSS_SGPIO_MODE_LACT_1;
+                      sgpio_bit_0_mode = VTSS_SGPIO_MODE_OFF;
+                      break;
+                  case VTSS_LED_MODE_ON_YELLOW:
+                      sgpio_bit_1_mode = sgpio_bit_0_mode = VTSS_SGPIO_MODE_ON;
+                      break;
+                  case VTSS_LED_MODE_BLINK_YELLOW:
+                      sgpio_bit_1_mode = sgpio_bit_0_mode = VTSS_SGPIO_MODE_BL_1;
+                      break;
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 4   
+
+                  case VTSS_LED_MODE_LINK_ACTIVITY_YELLOW:
+                      sgpio_bit_1_mode = sgpio_bit_0_mode = VTSS_SGPIO_MODE_LACT_1;
+                      break;
+              #endif
+ 179   2      
+ 180   2          default :
+ 181   2      #if defined(LEDTSK_DEBUG_ENABLE)
+                      print_str("%% Error: Wrong parameter when calling _led_mode_set(FALSE, ), mode=0x");
+                      print_hex_b(mode);
+                      print_cr_lf();
+              #endif /* LEDTSK_DEBUG_ENABLE */
+ 186   2              valid_mode = FALSE;
+ 187   2              break;
+ 188   2          }
+ 189   1      
+ 190   1          if (valid_mode) {
+ 191   2              h2_sgpio_write(sgpio_no, VTSS_SGPIO_BIT_1, sgpio_bit_1_mode);
+ 192   2              h2_sgpio_write(sgpio_no, VTSS_SGPIO_BIT_0, sgpio_bit_0_mode);
+ 193   2          }
+ 194   1      }
+ 195          
+ 196          #if defined(HW_LED_TOWER_PRESENT)
+              static void _led_update_tower(uchar mode)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Setup mode LED mode
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  switch (mode) {
+              #if defined(LUTON26_L25)
+                      /*
+                       *  LED tower
+                       *  (top)       o  mode A (link/speed)      sgpio port 26
+                       *              o  mode B (link/duplex)     sgpio port 27
+                       *              o  mode C (link/status)     sgpio port 28
+                       *  (button)    o  PWR save                 sgpio port 29
+                       */
+                  case VTSS_LED_TOWER_MODE_LINK_SPEED:
+                      _led_mode_set(28, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(29, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(27, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(26, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_DUPLEX:
+                      _led_mode_set(27, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(29, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(26, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(27, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_POWER_SAVE:
+                      _led_mode_set(27, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(28, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(26, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(29, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_LINK_STATUS:
+                      /* Mode C not supported in the unmanaged solution */
+                      break;
+              #elif defined(LUTON26_L10)
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 5   
+
+                      /*
+                       *  LED tower
+                       *  (top)       o  mode A (link/speed)      sgpio port 20
+                       *              o  mode B (link/duplex)     sgpio port 21
+                       *              o  mode C (link/status)     sgpio port 22
+                       *  (button)    o  PWR save                 sgpio port 23
+                       */
+                  case VTSS_LED_TOWER_MODE_LINK_SPEED:
+                      _led_mode_set(21, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(22, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(23, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(20, VTSS_LED_MODE_ON_GREEN);  /* Green */
+              
+                      break;
+                  case VTSS_LED_TOWER_MODE_DUPLEX:
+                      _led_mode_set(20, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(22, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(23, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(21, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_POWER_SAVE:
+                      _led_mode_set(21, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(22, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(20, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(23, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_LINK_STATUS:
+                      /* Mode C not supported in the unmanaged solution */
+              #else
+                      /*
+                       *  LED tower
+                       *  (top)       o  mode A (link/speed)      sgpio port 26
+                       *              o  mode B (link/duplex)     sgpio port 27
+                       *              o  mode C (link/status)     sgpio port 28
+                       *  (button)    o  PWR save                 sgpio port 29
+                       */
+                  case VTSS_LED_TOWER_MODE_LINK_SPEED:
+                      _led_mode_set(28, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(29, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(27, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(26, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_DUPLEX:
+                      _led_mode_set(27, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(29, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(26, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(27, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_POWER_SAVE:
+                      _led_mode_set(27, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(28, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(26, VTSS_LED_MODE_OFF); /* Off */
+                      _led_mode_set(29, VTSS_LED_MODE_ON_GREEN);  /* Green */
+                      break;
+                  case VTSS_LED_TOWER_MODE_LINK_STATUS:
+                      /* Mode C not supported in the unmanaged solution */
+                      break;
+              #endif
+                  default:
+                      break;
+                  }
+              }
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 6   
+
+              #endif /* HW_LED_TOWER_PRESENT */
+ 300          
+ 301          /* ************************************************************************ */
+ 302          void led_tsk(void)
+ 303          /* ------------------------------------------------------------------------ --
+ 304           * Purpose     : Detects button and setup port led accordingly
+ 305           * Remarks     :
+ 306           * Restrictions:
+ 307           * See also    :
+ 308           * Example     :
+ 309           ****************************************************************************/
+ 310          {
+ 311   1      #if defined(HW_LED_TOWER_PRESENT)
+                  /* GPIO bit 16 is for push button */
+                  if (h2_gpio_read(16)) {
+                      curr_tower_mode = (++curr_tower_mode) % VTSS_LED_TOWER_MODE_END;
+              
+                      /* Mode C not supported in the unmanaged solution */
+                      if (curr_tower_mode == VTSS_LED_TOWER_MODE_LINK_STATUS) {
+                          curr_tower_mode++;
+                      }
+                      led_mode_timer = LED_MODE_DEFAULT_TIME;
+                  } else if (led_mode_timer == 0) {
+                      curr_tower_mode = VTSS_LED_TOWER_MODE_POWER_SAVE;
+              
+                  }
+              
+                  _led_update_tower(curr_tower_mode);
+                  _led_update_port_by_tower_mode();
+              #endif /* HW_LED_TOWER_PRESENT */
+ 329   1      
+ 330   1          if (is_refresh_led && curr_tower_mode != VTSS_LED_TOWER_MODE_POWER_SAVE) {
+ 331   2              /* Update front LEDs */
+ 332   2              _led_update_port_by_tower_mode();
+ 333   2          }
+ 334   1      
+ 335   1          is_refresh_led = FALSE;
+ 336   1      
+ 337   1          /*
+ 338   1          **  Fixme:
+ 339   1          **  1) Setup other led/sgpio outputs, such as LED tower
+ 340   1          **  and sgpio port 26-31 for general purpose in the function
+ 341   1          **  or a new function
+ 342   1          **  2) To implement a callback function to update port led
+ 343   1          **  output for link change (up/down)
+ 344   1          **  3) To implement polling for switch counters to detect
+ 345   1          **  collisions at HDX for VTSS_LED_TOWER_MODE_DUPLEX mode and detect
+ 346   1          **  errors for VTSS_LED_TOWER_MODE_LINK_STATUS mode.
+ 347   1          **  4) Possibily create API for sgpio read. (Note: to read data
+ 348   1          **  in you need to issue two bursts, one for LD and one for
+ 349   1          **  clocking in)
+ 350   1          */
+ 351   1      }
+ 352          
+ 353          #if UNMANAGED_PORT_STATISTICS_IF && defined(HW_LED_TOWER_PRESENT)
+              /* ************************************************************************ */
+              static BOOL _port_collision(uchar port_no)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Check if collision occured
+               * Remarks     :
+               * Restrictions:
+               * See also    :
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 7   
+
+               * Example     :
+               ****************************************************************************/
+              {
+                  ulong collision_cnt;
+                  uchar i_port_no;
+                  i_port_no = uport2cport(port_no + 1);
+                  collision_cnt = h2_stats_counter_get(i_port_no, CNT_TX_COLLISIONS);
+              
+                  if (col_cnt[port_no] != collision_cnt) {
+                      col_cnt[port_no] = collision_cnt;
+                      return TRUE;
+                  }
+              
+                  return FALSE;
+              }
+              #endif // UNMANAGED_PORT_STATISTICS_IF && HW_LED_TOWER_PRESENT
+ 377          
+ 378          /* ************************************************************************ */
+ 379          static void _led_update_port_by_tower_mode(void)
+ 380          /* ------------------------------------------------------------------------ --
+ 381           * Purpose     : Setup port LED mode
+ 382           * Remarks     :
+ 383           * Restrictions:
+ 384           * See also    :
+ 385           * Example     :
+ 386           ****************************************************************************/
+ 387          {
+ 388   1          vtss_iport_no_t iport_idx;
+ 389   1          vtss_cport_no_t chip_port;
+ 390   1          uchar link_mode;
+ 391   1      
+ 392   1          for (iport_idx = MIN_PORT; iport_idx < MAX_PORT; iport_idx++) {
+ 393   2              if (curr_led_port_event[iport_idx] != VTSS_LED_MODE_NORMAL) {
+ 394   3                  /* at least one of error events occurs, just show the error status */
+ 395   3                  continue;
+ 396   3              }
+ 397   2      
+ 398   2              chip_port = iport2cport(iport_idx);
+ 399   2              link_mode = port_link_mode_get(chip_port);
+ 400   2      
+ 401   2      #if defined(LEDTSK_DEBUG_ENABLE)
+                  print_str("Calling _led_update_port_by_tower_mode(): iport_idx=0x");
+                  print_hex_b(iport_idx);
+              
+                  print_str(", chip_port=0x");
+                  print_hex_b(chip_port);
+              
+                  print_str(", link_mode=0x");
+                  print_hex_b(link_mode);
+                  print_str(", curr_tower_mode=0x");
+                  print_hex_b(curr_tower_mode);
+                  print_cr_lf();
+              #endif /* LEDTSK_DEBUG_ENABLE */
+ 414   2      
+ 415   2              switch (curr_tower_mode) {
+ 416   3      #if defined(HW_LED_TOWER_PRESENT)
+                      case VTSS_LED_TOWER_MODE_POWER_SAVE:
+                          /* Force off no matter link is up or not */
+                          _led_mode_set(chip_port, VTSS_LED_MODE_OFF);
+                          break;
+              
+                      case VTSS_LED_TOWER_MODE_DUPLEX:
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 8   
+
+                          /* Duplex mode; Green for FDX and Yellow for HDX */
+                          if (link_mode == LINK_MODE_DOWN) {
+                              /* Link down */
+                              _led_mode_set(chip_port, VTSS_LED_MODE_OFF);
+                          } else if (link_mode & LINK_MODE_FDX_MASK) {
+                              /* Green: FDX */
+                              _led_mode_set(chip_port, VTSS_LED_MODE_ON_GREEN);
+                          } else {
+              #if UNMANAGED_PORT_STATISTICS_IF && defined(HW_LED_TOWER_PRESENT)
+                              if (_port_collision(iport_idx)) {
+                                  /* collision, blinking LED - Yellow/Blink: HDX */
+                                  _led_mode_set(chip_port, VTSS_LED_MODE_BLINK_YELLOW);
+                              } else
+              #endif // UNMANAGED_PORT_STATISTICS_IF && HW_LED_TOWER_PRESENT
+                              {
+                                  /* no collision, turn on LED - Yellow/On: HDX */
+                                  _led_mode_set(chip_port, VTSS_LED_MODE_ON_YELLOW);
+                              }
+                          }
+                          break;
+              
+                      case VTSS_LED_TOWER_MODE_LINK_STATUS:
+                          /* Green for link/activity; Yellow: Port disabled */
+                          if (link_mode == LINK_MODE_DOWN) {
+                              /* Link down */
+                              _led_mode_set(chip_port, VTSS_LED_MODE_OFF);
+                          } else if (link_mode & LINK_MODE_SPEED_MASK) {
+                              /* Green: Link/activity */
+                              _led_mode_set(chip_port, VTSS_LED_MODE_LINK_ACTIVITY_GREEN);
+                          } else {
+                              /* Yellow: Port disabled */
+                              _led_mode_set(chip_port, VTSS_LED_MODE_ON_YELLOW);
+                          }
+                          break;
+              
+              #endif /* HW_LED_TOWER_PRESENT */
+ 459   3      
+ 460   3              case VTSS_LED_TOWER_MODE_LINK_SPEED:
+ 461   3                  /* Link/activity; Green for 1G and Yellow for 10/100 */
+ 462   3                  if (link_mode == LINK_MODE_DOWN) {
+ 463   4                      /* Link down */
+ 464   4                      _led_mode_set(chip_port, VTSS_LED_MODE_OFF);
+ 465   4                  } else if ((link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_10 ||
+ 466   3                             (link_mode & LINK_MODE_SPEED_MASK) == LINK_MODE_SPEED_100) {
+ 467   4                      /* Yellow: 100/10 link/activity */
+ 468   4                      _led_mode_set(chip_port, VTSS_LED_MODE_LINK_ACTIVITY_YELLOW);
+ 469   4                  } else {
+ 470   4                      /* Green: 1G/2.5G link/activity */
+ 471   4                      _led_mode_set(chip_port, VTSS_LED_MODE_LINK_ACTIVITY_GREEN);
+ 472   4                  }
+ 473   3                  break;
+ 474   3      
+ 475   3              default:
+ 476   3                  break;
+ 477   3              }
+ 478   2          }
+ 479   1      }
+ 480          
+ 481          void led_refresh(void)
+ 482          {
+ 483   1          is_refresh_led = TRUE;
+ 484   1      }
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 9   
+
+ 485          
+ 486          
+ 487          /* ************************************************************************ */
+ 488          void led_init(void)
+ 489          /* ------------------------------------------------------------------------ --
+ 490           * Purpose     : SGPIO controller setup based on board
+ 491           * Remarks     :
+ 492           * Restrictions:
+ 493           * See also    :
+ 494           * Example     :
+ 495           ****************************************************************************/
+ 496          {
+ 497   1      #if defined(VTSS_ARCH_LUTON26)
+                  // Something specfic signature on Luton board ???
+                  phy_page_std(15);
+                  phy_write_masked(15, 29, 0x00f0, 0x00f0);
+              #endif
+ 502   1      
+ 503   1          /* Given an initial state/value */
+ 504   1          memset(curr_led_port_event, VTSS_LED_MODE_NORMAL, sizeof(curr_led_port_event));
+ 505   1          memset(led_port_event, 0, sizeof(led_port_event));
+ 506   1      #if UNMANAGED_PORT_STATISTICS_IF && defined(HW_LED_TOWER_PRESENT)
+                  memset(col_cnt, 0, sizeof(col_cnt));
+              #endif // UNMANAGED_PORT_STATISTICS_IF && HW_LED_TOWER_PRESENT
+ 509   1      
+ 510   1          led_mode_timer = LED_MODE_DEFAULT_TIME;
+ 511   1      
+ 512   1          /* Light status LED green */
+ 513   1          led_update_system(VTSS_LED_MODE_ON_GREEN);
+ 514   1      
+ 515   1      #if defined(HW_LED_TOWER_PRESENT)
+                  /* Light tower LED */
+                  _led_update_tower(VTSS_LED_TOWER_MODE_LINK_SPEED);
+              #endif /* HW_LED_TOWER_PRESENT */
+ 519   1      
+ 520   1          /* Light port LED */
+ 521   1          _led_update_port_by_tower_mode();
+ 522   1      }
+ 523          
+ 524          #if (TRANSIT_VERIPHY || TRANSIT_LOOPDETECT)
+              /* ************************************************************************ */
+              void led_port_event_set(vtss_iport_no_t iport, vtss_led_event_type_t event, vtss_led_mode_type_t mode)
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Set the LED mode for error event
+               * Remarks     : The status set here overcomes the normal LED display
+               *               event
+               *                  VTSS_LED_EVENT_PORT_LOOP,
+               *                  VTSS_LED_EVENT_PHY_OVERHEAT,
+               *                  VTSS_LED_EVENT_VERIPHY_ERR
+               *               mode
+               *                  VTSS_LED_MODE_NORMAL,    (priority low)
+               *                  VTSS_LED_MODE_OFF,
+               *                  VTSS_LED_MODE_ON_GREEN,
+               *                  VTSS_LED_MODE_ON_YELLOW,
+               *                  VTSS_LED_MODE_BLINK_GREEN,   at 10Hz
+               *                  VTSS_LED_MODE_BLINK_YELLOW   at 10Hz (priority high)
+               *
+               *              The highest priority mode will show when any conflict
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 10  
+
+              {
+                  uchar           led_event;
+                  uchar           temp_led_port_event;
+                  vtss_cport_no_t chip_port;
+              
+                  if (iport != SYS_LED_SGPIO_PORT) {
+                      chip_port = iport2cport(iport);
+                  } else {
+                      iport = NO_OF_BOARD_PORTS; // The last array entry is used to system LED
+                      chip_port = SYS_LED_SGPIO_PORT;
+                  }
+              
+                  led_port_event[iport][event] = mode;
+              
+                  /* Select the highest priority event to show */
+                  temp_led_port_event = led_port_event[iport][0];
+                  for (led_event = 1; led_event < VTSS_LED_EVENT_END; led_event++) {
+                  
+                      if (temp_led_port_event < led_port_event[iport][led_event])
+                          temp_led_port_event = led_port_event[iport][led_event];
+                  }
+                  curr_led_port_event[iport] =  temp_led_port_event;
+              #if defined(LEDTSK_DEBUG_ENABLE)    
+                  if (iport == NO_OF_BOARD_PORTS) {
+                      print_str("iport: ");
+                      print_dec(iport);
+                      print_str("temp_led_port_event: ");
+                      print_dec(temp_led_port_event); print_cr_lf();
+                  }
+              #endif //LEDTSK_DEBUG_ENABLE    
+                  /* Set port LED mode */
+                  if (mode == VTSS_LED_MODE_NORMAL) {
+                      /* Error event gone and back to normal LED display */
+                      led_refresh(); /* Trigger to update normal LED at the next second */
+              #if defined(LEDTSK_DEBUG_ENABLE)        
+                      if (iport == NO_OF_BOARD_PORTS) 
+                          print_str("VTSS_LED_MODE_NORMAL: "); 
+              #endif //LEDTSK_DEBUG_ENABLE              
+                      return;
+                  }
+              
+              #if defined(FERRET_F11) || defined(FERRET_F10P) || defined(FERRET_F5) || defined(FERRET_F4P)
+                  _led_mode_set(chip_port, temp_led_port_event);
+              #elif defined(VTSS_ARCH_LUTON26)
+                  _led_mode_set(chip_port, temp_led_port_event);
+              #endif
+              }
+              #endif // TRANSIT_VERIPHY || TRANSIT_LOOPDETECT
+ 595          
+ 596          void led_update_system(vtss_led_mode_type_t mode)
+ 597          {
+ 598   1      #if defined(SYS_LED_SGPIO_PORT)
+ 599   1          _led_mode_set(SYS_LED_SGPIO_PORT, mode);
+ 600   1      #endif /* SYS_LED_SGPIO_PORT */
+ 601   1      }
+ 602          
+ 603          void led_1s_timer(void)
+ 604          {
+ 605   1          static uchar i = 0;
+ 606   1          
+ 607   1      #if (TRANSIT_VERIPHY || TRANSIT_LOOPDETECT)   
+                  led_port_event_set(SYS_LED_SGPIO_PORT, VTSS_LED_EVENT_LED,
+C51 COMPILER V9.60.0.0   LEDTSK                                                            11/30/2021 16:22:28 PAGE 11  
+
+                                i++ % 2 ? VTSS_LED_MODE_ON_GREEN : VTSS_LED_MODE_OFF);
+              #else
+ 611   1          led_update_system(i++ % 2 ? VTSS_LED_MODE_ON_GREEN : VTSS_LED_MODE_OFF);   
+ 612   1      #endif //TRANSIT_VERIPHY || TRANSIT_LOOPDETECT    
+ 613   1         
+ 614   1          if (led_mode_timer != 0)
+ 615   1              led_mode_timer--;
+ 616   1      }
+ 617          #endif //FRONT_LED_PRESENT
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    398    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     34       6
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----       1
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

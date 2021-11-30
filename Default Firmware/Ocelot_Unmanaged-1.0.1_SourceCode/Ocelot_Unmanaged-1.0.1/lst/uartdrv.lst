@@ -1,0 +1,390 @@
+C51 COMPILER V9.60.0.0   UARTDRV                                                           11/30/2021 16:22:16 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE UARTDRV
+OBJECT MODULE PLACED IN ..\obj\uartdrv.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE ..\src\main\uartdrv.c LARGE OPTIMIZE(9,SIZE) INCDIR(c:\keil\c51\inc\winb
+                    -ond;..\src\config;..\src\config\proj_opt;..\src\cli;..\src\main;..\src\switch;..\src\phy;..\src\util;..\src\switch\vtss_
+                    -api\base;..\src\switch\vtss_api\base\ocelot;..\src\switch\include;..\src\lldp;..\src\snmp;..\src\sw_lacp;..\src\eee;..\s
+                    -rc\eee\base\include;..\src\fan;..\src\led;..\src\loop) DEFINE(VTSS_ARCH_OCELOT,FERRET_F5,PROJ_OPT=0) DEBUG OBJECTEXTEND 
+                    -PRINT(..\lst\uartdrv.lst) TABS(2) OBJECT(..\obj\uartdrv.obj)
+
+line level    source
+
+   1          /*
+   2          
+   3           Copyright (c) 2017 Microsemi Corporation "Microsemi".
+   4          
+   5           Permission is hereby granted, free of charge, to any person obtaining a copy
+   6           of this software and associated documentation files (the "Software"), to deal
+   7           in the Software without restriction, including without limitation the rights
+   8           to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   9           copies of the Software, and to permit persons to whom the Software is
+  10           furnished to do so, subject to the following conditions:
+  11          
+  12           The above copyright notice and this permission notice shall be included in all
+  13           copies or substantial portions of the Software.
+  14          
+  15           THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  16           IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  17           FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  18           AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  19           LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  20           OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  21           SOFTWARE.
+  22          
+  23          */
+  24          
+  25          #include "common.h"     /* Always include common.h at the first place of user-defined herder files */
+  26          #include "vtss_api_base_regs.h"
+  27          #include "h2io.h"
+  28          #include "uartdrv.h"
+  29          #include "timer.h"
+  30          #include "misc2.h"
+  31          
+  32          #pragma NOAREGS
+  33          
+  34          #ifndef NO_DEBUG_IF
+  35          
+  36          /*****************************************************************************
+  37           *
+  38           *
+  39           * Public data
+  40           *
+  41           *
+  42           *
+  43           ****************************************************************************/
+  44          
+  45          bit uart_rx_buf_overrun = FALSE;
+  46          
+  47          /*****************************************************************************
+  48           *
+  49           *
+  50           * Defines
+  51           *
+C51 COMPILER V9.60.0.0   UARTDRV                                                           11/30/2021 16:22:16 PAGE 2   
+
+  52           *
+  53           *
+  54           ****************************************************************************/
+  55          #if defined(VTSS_ARCH_OCELOT)
+  56          #define INT_UART_INDEX   6
+  57          #define VTSS_GPIO_UART_MASK   0x000000C0 //GPIO[7..6]:Ocelot
+  58          #define BAUD_RATE_DIVISOR     (ushort) ((float)(CLOCK_FREQ / (16 * (float) BAUD_RATE)) + 0.5)
+  59          
+  60          #elif defined(VTSS_ARCH_LUTON26)
+              #define VTSS_GPIO_UART_MASK   0xC0000000
+              #define BAUD_RATE_DIVISOR     (ushort) ((float)(CLOCK_FREQ / (32 * (float) BAUD_RATE)) + 0.5)
+              #endif // VTSS_ARCH_OCELOT
+  64          
+  65          /* size of receive buffer. Must be a power of 2, i.e. 2, 4, 8 ... 256 */
+  66          #define RX_BUF_SIZE 32
+  67          
+  68          
+  69          /*****************************************************************************
+  70           *
+  71           *
+  72           * Typedefs and enums
+  73           *
+  74           *
+  75           *
+  76           ****************************************************************************/
+  77          
+  78          /*****************************************************************************
+  79           *
+  80           *
+  81           * Prototypes for local functions
+  82           *
+  83           *
+  84           *
+  85           ****************************************************************************/
+  86          
+  87          /*****************************************************************************
+  88           *
+  89           *
+  90           * Local data
+  91           *
+  92           *
+  93           *
+  94           ****************************************************************************/
+  95          
+  96          static uchar idata rx_buf [RX_BUF_SIZE];
+  97          
+  98          #if RX_BUF_SIZE > 256
+              static ushort data rx_head  = 0;
+              static ushort data rx_tail  = 0;
+              #else
+ 102          static uchar data rx_head  = 0;
+ 103          static uchar data rx_tail  = 0;
+ 104          #endif /* RX_BUF_SIZE > 256 */
+ 105          
+ 106          
+ 107          static data uchar xdata *redir_ptr = 0;
+ 108          
+ 109          /* ************************************************************************ */
+ 110          void uart_init (void) small
+ 111          /* ------------------------------------------------------------------------ --
+ 112           * Purpose     : Enable TX and RX on UART.
+ 113           * Remarks     :
+C51 COMPILER V9.60.0.0   UARTDRV                                                           11/30/2021 16:22:16 PAGE 3   
+
+ 114           * Restrictions:
+ 115           * See also    :
+ 116           * Example     :
+ 117           ****************************************************************************/
+ 118          {
+ 119   1      #if defined(VTSS_ARCH_OCELOT)
+ 120   1          /*
+ 121   1           * Important !!!
+ 122   1           *
+ 123   1           * Don't access the switch register via APIs H2_READ()/H2_WRITE()/H2_WRITE_MASKED()
+ 124   1           * before the interrupt mechanism is ready
+ 125   1           */
+ 126   1      
+ 127   1          /* Configure GPIO for UART */
+ 128   1          h2_write_masked(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0), VTSS_GPIO_UART_MASK, VTSS_GPIO_UART_MASK);
+ 129   1      
+ 130   1          /* Setup line control for 8-n-1 and enable divisor access */
+ 131   1          h2_write_masked(VTSS_UART_UART_LCR(VTSS_TO_UART), VTSS_F_UART_UART_LCR_DLAB(1) | VTSS_F_UART_UART_LCR_
+             -DLS(3), \
+ 132   1                          VTSS_M_UART_UART_LCR_DLAB | VTSS_M_UART_UART_LCR_DLS);
+ 133   1      
+ 134   1          /* Set divisor */
+ 135   1          h2_write(VTSS_UART_UART_RBR_THR(VTSS_TO_UART), LOW_BYTE(BAUD_RATE_DIVISOR));
+ 136   1          h2_write(VTSS_UART_UART_IER(VTSS_TO_UART), HIGH_BYTE(BAUD_RATE_DIVISOR));
+ 137   1          h2_write_masked(VTSS_UART_UART_LCR(VTSS_TO_UART), 0, VTSS_M_UART_UART_LCR_DLAB);
+ 138   1      
+ 139   1          /* Enable FIFO */
+ 140   1          h2_write_masked(VTSS_UART_UART_IIR_FCR(VTSS_TO_UART), VTSS_F_UART_UART_IIR_FCR_XFIFOR(1) | \
+ 141   1                          VTSS_F_UART_UART_IIR_FCR_RFIFOR(1) | VTSS_F_UART_UART_IIR_FCR_FIFOE(1), \
+ 142   1                          VTSS_M_UART_UART_IIR_FCR_XFIFOR | \
+ 143   1                          VTSS_M_UART_UART_IIR_FCR_RFIFOR | VTSS_M_UART_UART_IIR_FCR_FIFOE);
+ 144   1      
+ 145   1          /* Enable appropriate interrupts of UART */
+ 146   1          h2_write_masked(VTSS_UART_UART_IER(VTSS_TO_UART), VTSS_F_UART_UART_IER_ERBFI(1), VTSS_M_UART_UART_IER_
+             -ERBFI);
+ 147   1      
+ 148   1          /* Setup interrupt controller(iCPU_IRQ1) to enable UART interrupting and the propagate destination */
+ 149   1          h2_write_masked(VTSS_ICPU_CFG_INTR_DST_INTR_MAP(1),
+ 150   1                          bit_mask_32(INT_UART_INDEX),
+ 151   1                          bit_mask_32(INT_UART_INDEX));
+ 152   1          h2_write_masked(VTSS_ICPU_CFG_INTR_INTR_ENA_SET,
+ 153   1                          bit_mask_32(INT_UART_INDEX),
+ 154   1                          bit_mask_32(INT_UART_INDEX));
+ 155   1      
+ 156   1      #elif defined(VTSS_ARCH_LUTON26)
+                  /* Configure GPIO for UART */
+                  h2_write_masked(VTSS_DEVCPU_GCB_GPIO_GPIO_ALT(0), VTSS_GPIO_UART_MASK, VTSS_GPIO_UART_MASK);
+              
+                  /* Disable interrupts of UART */
+              
+                  /* Wait for transmit FIFO empty before reseting */
+              
+                  /* Setup line control for 8-n-1 and enable divisor access */
+                  h2_write_masked(VTSS_UART_UART_LCR, VTSS_F_UART_UART_LCR_DLAB | VTSS_F_UART_UART_LCR_DLS(3), \
+                                  VTSS_F_UART_UART_LCR_DLAB | VTSS_F_UART_UART_LCR_DLS(3));
+              
+                  /* Set divisor */
+                  h2_write(VTSS_UART_UART_RBR_THR, LOW_BYTE(BAUD_RATE_DIVISOR));
+                  h2_write(VTSS_UART_UART_IER, HIGH_BYTE(BAUD_RATE_DIVISOR));
+                  h2_write_masked(VTSS_UART_UART_LCR, 0, VTSS_F_UART_UART_LCR_DLAB);
+              
+                  /* Enable FIFO */
+C51 COMPILER V9.60.0.0   UARTDRV                                                           11/30/2021 16:22:16 PAGE 4   
+
+                  h2_write_masked(VTSS_UART_UART_IIR_FCR, VTSS_F_UART_UART_IIR_FCR_XFIFOR | \
+                                  VTSS_F_UART_UART_IIR_FCR_RFIFOR | VTSS_F_UART_UART_IIR_FCR_FIFOE, \
+                                  VTSS_F_UART_UART_IIR_FCR_XFIFOR | \
+                                  VTSS_F_UART_UART_IIR_FCR_RFIFOR | VTSS_F_UART_UART_IIR_FCR_FIFOE);
+              
+                  /* Enable appropriate interrupts of UART */
+                  h2_write_masked(VTSS_UART_UART_IER, VTSS_F_UART_UART_IER_ERBFI, VTSS_F_UART_UART_IER_ERBFI);
+              
+                  /* Setup interrupt controller to enable UART interrupting and the propagate destination */
+                  h2_write_masked(VTSS_ICPU_CFG_INTR_UART_INTR_CFG,
+                                  VTSS_F_ICPU_CFG_INTR_UART_INTR_CFG_UART_INTR_SEL(1),
+                                  VTSS_M_ICPU_CFG_INTR_UART_INTR_CFG_UART_INTR_SEL);
+              
+                  h2_write_masked(VTSS_ICPU_CFG_INTR_INTR_ENA, VTSS_F_ICPU_CFG_INTR_INTR_ENA_UART_INTR_ENA, \
+                                  VTSS_F_ICPU_CFG_INTR_INTR_ENA_UART_INTR_ENA);
+              #endif // VTSS_ARCH_OCELOT          
+ 190   1      }
+ 191          
+ 192          
+ 193          /* ************************************************************************ */
+ 194          void uart_interrupt (void) small
+ 195          /* ------------------------------------------------------------------------ --
+ 196           * Purpose     : Interrupt function. Save received char in buffer.
+ 197           * Remarks     :
+ 198           * Restrictions:
+ 199           * See also    :
+ 200           * Example     :
+ 201           ****************************************************************************/
+ 202          {
+ 203   1          /*
+ 204   1           * Important !!!
+ 205   1           *
+ 206   1           * Don't access the switch register via APIs H2_READ()/H2_WRITE()/H2_WRITE_MASKED()
+ 207   1           * in the UART interrput routine
+ 208   1           */
+ 209   1      
+ 210   1      #if defined(VTSS_ARCH_OCELOT)
+ 211   1          uchar ch;
+ 212   1          ulong temp;
+ 213   1      
+ 214   1          EA = 0;
+ 215   1      
+ 216   1          temp = h2_read(VTSS_UART_UART_IIR_FCR(VTSS_TO_UART));
+ 217   1          temp &= IIR_INTERRUPT_ID_MASK; //iir_int_id_mask;
+ 218   1      
+ 219   1          if ((temp == IIR_RX_AVAIL) || (temp == IIR_RX_CHAR_TIMEOUT)) {
+ 220   2              do {
+ 221   3                  temp = h2_read(VTSS_UART_UART_RBR_THR(VTSS_TO_UART));
+ 222   3                  ch = (uchar) (temp & 0xFF);
+ 223   3                  /* save received char if not buffer overrun */
+ 224   3                  if ((rx_head + 1) == rx_tail) {
+ 225   4                      uart_rx_buf_overrun = TRUE;
+ 226   4                  } else {
+ 227   4                      rx_buf[rx_head] = ch;
+ 228   4                      rx_head = (rx_head + 1) & (RX_BUF_SIZE - 1);
+ 229   4                  }
+ 230   3                  temp = h2_read(VTSS_UART_UART_LSR(VTSS_TO_UART));
+ 231   3              } while (test_bit_32(0, &temp));
+ 232   2          }
+ 233   1          EA = 1;
+ 234   1      
+ 235   1      #elif defined(VTSS_ARCH_LUTON26)
+C51 COMPILER V9.60.0.0   UARTDRV                                                           11/30/2021 16:22:16 PAGE 5   
+
+                  uchar ch;
+                  ulong temp;
+              
+                  //const ulong code reg_uart_iir_fcr = VTSS_UART_UART_IIR_FCR;
+                  //const ulong code reg_uart_rbr_thr = VTSS_UART_UART_RBR_THR;
+                  //const ulong code reg_uart_lsr     = VTSS_UART_UART_LSR;
+              
+                  //const ulong code lsr_dr_mask      = VTSS_F_UART_UART_LSR_DR;
+                  //const ulong code iir_int_id_mask  = IIR_INTERRUPT_ID_MASK;
+              
+                  EA = 0;
+                  //temp = h2_read(reg_uart_iir_fcr);
+                  temp = h2_read(VTSS_UART_UART_IIR_FCR);
+                  temp &= IIR_INTERRUPT_ID_MASK; //iir_int_id_mask;
+              
+                  if ((temp == IIR_RX_AVAIL) || (temp == IIR_RX_CHAR_TIMEOUT)) {
+                      do {
+                          //temp = h2_read(reg_uart_rbr_thr);
+                          temp = h2_read(VTSS_UART_UART_RBR_THR);
+                          ch = (uchar) (temp & 0xFF);
+                          /* save received char if not buffer overrun */
+                          if ((rx_head + 1) == rx_tail) {
+                              uart_rx_buf_overrun = TRUE;
+                          } else {
+                              rx_buf[rx_head] = ch;
+                              rx_head = (rx_head + 1) & (RX_BUF_SIZE - 1);
+                          }
+                          //temp = h2_read(reg_uart_lsr);
+                          temp = h2_read(VTSS_UART_UART_LSR);
+                          //} while (temp & lsr_dr_mask);
+                      } while (test_bit_32(0, &temp));
+                  }
+                  EA = 1;
+              #endif // VTSS_ARCH_OCELOT
+ 270   1      }
+ 271          
+ 272          /* ************************************************************************ */
+ 273          bool uart_byte_ready (void) small
+ 274          /* ------------------------------------------------------------------------ --
+ 275           * Purpose     : Check if any char received.
+ 276           * Remarks     : Returns TRUE, if char ready, otherwise FALSE.
+ 277           * Restrictions:
+ 278           * See also    : uart_get_byte
+ 279           * Example     :
+ 280           ****************************************************************************/
+ 281          {
+ 282   1          return (rx_head != rx_tail);
+ 283   1      }
+ 284          
+ 285          /* ************************************************************************ */
+ 286          uchar uart_get_byte (void) small
+ 287          /* ------------------------------------------------------------------------ --
+ 288           * Purpose     : Get received char.
+ 289           * Remarks     :
+ 290           * Restrictions: May only be called if uart_byte_ready has returned TRUE.
+ 291           * See also    : uart_byte_ready
+ 292           * Example     :
+ 293           ****************************************************************************/
+ 294          {
+ 295   1          uchar tmp;
+ 296   1      
+ 297   1          tmp = rx_buf[rx_tail];
+C51 COMPILER V9.60.0.0   UARTDRV                                                           11/30/2021 16:22:16 PAGE 6   
+
+ 298   1          rx_tail = (rx_tail + 1) & (RX_BUF_SIZE - 1);
+ 299   1          return tmp;
+ 300   1      }
+ 301          
+ 302          void uart_put_byte (uchar ch) small
+ 303          {
+ 304   1          ulong lsr;
+ 305   1      
+ 306   1          if(redir_ptr != 0) {
+ 307   2              *redir_ptr++ = ch;
+ 308   2              return;
+ 309   2          }
+ 310   1      
+ 311   1      #if defined(VTSS_ARCH_OCELOT)
+ 312   1          do {
+ 313   2              /* Wait TX FIFO be empty */
+ 314   2              H2_READ(VTSS_UART_UART_LSR(VTSS_TO_UART), lsr);
+ 315   2          } while(!test_bit_32(6, &lsr));
+ 316   1      
+ 317   1          H2_WRITE(VTSS_UART_UART_RBR_THR(VTSS_TO_UART), ch);
+ 318   1      
+ 319   1      #elif defined(VTSS_ARCH_LUTON26)
+                  do {
+                      /* Wait TX FIFO be empty */
+                      H2_READ(VTSS_UART_UART_LSR, lsr);
+                  } while(!test_bit_32(6, &lsr));
+              
+                  H2_WRITE(VTSS_UART_UART_RBR_THR, ch);
+              #endif // VTSS_ARCH_OCELOT
+ 327   1      }
+ 328          
+ 329          /* ************************************************************************ */
+ 330          #if UNMANAGED_LLDP_DEBUG_IF && !TRANSIT_LLDP_REDUCED
+              void uart_redirect (uchar xdata *ptr) small
+              /* ------------------------------------------------------------------------ --
+               * Purpose     : Request uart driver to redirect output to the specified
+               *               pointer. Used for the WEB interface.
+               * Remarks     : If ptr = 0, then stop redirect output. When different from
+               *               0, the caller must ensure that the buffer is large enough.
+               * Restrictions:
+               * See also    :
+               * Example     :
+               ****************************************************************************/
+              {
+                  if (ptr == 0) {
+                      *redir_ptr = '\0';
+                  }
+                  redir_ptr = ptr;
+              }
+              #endif // UNMANAGED_LLDP_DEBUG_IF || !TRANSIT_LLDP_REDUCED
+ 348          
+ 349          #endif /* NO_DEBUG_IF */
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    528    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      4       9
+   IDATA SIZE       =     32    ----
+   BIT SIZE         =      1    ----
+C51 COMPILER V9.60.0.0   UARTDRV                                                           11/30/2021 16:22:16 PAGE 7   
+
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

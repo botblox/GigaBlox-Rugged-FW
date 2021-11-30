@@ -1,0 +1,660 @@
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     1
+
+
+MACRO ASSEMBLER A51 V8.2.7.0
+OBJECT MODULE PLACED IN ..\obj\misc2.obj
+ASSEMBLER INVOKED BY: C:\Keil_v5\C51\BIN\A51.EXE ..\src\util\misc2.a51 INCDIR(..\src\config) SET(LARGE) DEBUG PRINT(..\l
+                      st\misc2.lst) OBJECT(..\obj\misc2.obj) EP
+
+LOC  OBJ            LINE     SOURCE
+
+                       1     ;*
+                       2     ;*
+                       3     ;* Copyright (c) 2017 Microsemi Corporation "Microsemi".
+                       4     ;*
+                       5     ;* Permission is hereby granted, free of charge, to any person obtaining a copy
+                       6     ;* of this software and associated documentation files (the "Software"), to deal
+                       7     ;* in the Software without restriction, including without limitation the rights
+                       8     ;* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+                       9     ;* copies of the Software, and to permit persons to whom the Software is
+                      10     ;* furnished to do so, subject to the following conditions:
+                      11     ;*
+                      12     ;* The above copyright notice and this permission notice shall be included in all
+                      13     ;* copies or substantial portions of the Software.
+                      14     ;*
+                      15     ;* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+                      16     ;* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+                      17     ;* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+                      18     ;* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+                      19     ;* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+                      20     ;* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                      21     ;* SOFTWARE.
+                      22     ;*
+                      23     ;*
+                      24     ;*
+                      25     
+                      26     $nomod51 
+                      27     ;$include (REG52.INC)
+                +1    28     ;-------------------------------------------------------------------------------
+                +1    29     ; Copyright 1995-1996 KEIL Software, Inc.
+                +1    30     ; 8052 Processor Declarations
+                +1    31     ;-------------------------------------------------------------------------------
+                +1    32  +1 $save 
+                +1   133  +1 $restore 
+                +1   134     
+                     135     
+                     136     
+                     137     NAME    MISCUTIL2
+                     138     
+                     139     PUBLIC  _ushorts2ulong, _high_w
+                     140     PUBLIC  _bytes2ushort
+                     141     PUBLIC  _bit_mask_32
+                     142     PUBLIC  _bit_mask_16
+                     143     PUBLIC  _bit_mask_8
+                     144     PUBLIC  _write_bit_8
+                     145     PUBLIC  _write_bit_16
+                     146     PUBLIC  _write_bit_32
+                     147     PUBLIC  _test_bit_8
+                     148     PUBLIC  _test_bit_16
+                     149     PUBLIC  _test_bit_32
+                     150     
+                     151     PROG    SEGMENT CODE
+                     152     
+----                 153             RSEG    PROG
+                     154             
+                     155     ;* ************************************************************************ */
+                     156     ; ulong  bytes2ushort (uchar lsb, uchar msb) small;
+0000                 157     _bytes2ushort:
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     2
+
+                     158     ;* ------------------------------------------------------------------------ --
+                     159     ;* Purpose     : Create an unsigned long from 2 unsigned shorts.
+                     160     ;* Remarks     : 
+                     161     ;* Restrictions:
+                     162     ;* See also    :
+                     163     ;* Example     :
+                     164     ; * ************************************************************************ */
+                     165     
+                     166             ; Exploit the compiler which parses 1st parameter (lsb) in r7 and
+                     167             ; 2nd parameter (msb) in r5, the return value
+                     168             ; will be a short in r6-r7.
+0000 ED              169             mov a, r5
+0001 FE              170             mov r6, a
+0002 22              171             ret
+                     172     
+                     173     ;* ************************************************************************ */
+                     174     ; ulong  ushorts2ulong (ushort lsw, ushort msw) small;
+0003                 175     _ushorts2ulong:
+                     176     ;* ------------------------------------------------------------------------ --
+                     177     ;* Purpose     : Create an unsigned long from 2 unsigned shorts.
+                     178     ;* Remarks     : 
+                     179     ;* Restrictions:
+                     180     ;* See also    :
+                     181     ;* Example     :
+                     182     ; * ************************************************************************ */
+                     183     
+                     184             ; Exploit the compiler which parses 1st parameter (lsw) in r6, r7 and
+                     185             ; 2nd parameter (msw) in r4, r5, i.e. without doing anything the return value
+                     186             ; will be a long in r4-r7.
+                     187     
+0003 22              188             ret
+                     189     
+                     190     ;* ************************************************************************ */
+                     191     ; ushort  high_w (ulong ul) small;
+0004                 192     _high_w:
+                     193     ;* ------------------------------------------------------------------------ --
+                     194     ;* Purpose     : Get high 16 bits of an unsigned long.
+                     195     ;* Remarks     : 
+                     196     ;* Restrictions:
+                     197     ;* See also    :
+                     198     ;* Example     :
+                     199     ; * ************************************************************************ */
+                     200     
+0004 EC              201             mov     a, r4
+0005 FE              202             mov     r6, a
+0006 ED              203             mov     a, r5
+0007 FF              204             mov     r7, a
+                     205     
+0008 22              206             ret
+                     207     
+                     208     ; Bit table used for converting a bit number to a bit mask
+0009                 209     bit_table:
+0009 01              210             db      01H
+000A 02              211             db      02H
+000B 04              212             db      04H
+000C 08              213             db      08H
+000D 10              214             db      10H
+000E 20              215             db      20H
+000F 40              216             db      40H
+0010 80              217             db      80H
+                     218     
+                     219     ;* ************************************************************************ */
+                     220     ; ulong  bit_mask_32 (uchar bit_no) small;
+0011                 221     _bit_mask_32:
+                     222     ;* ------------------------------------------------------------------------ --
+                     223     ;* Purpose     : Build a 32-bit mask with ONE bit set according to specified
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     3
+
+                     224     ;*               bit number.
+                     225     ;* Remarks     : r7 holds bit number.
+                     226     ;* Restrictions:
+                     227     ;* See also    :
+                     228     ;* Example     :
+                     229     ; * ************************************************************************ */
+                     230     
+0011 EF              231             mov     a, r7
+0012 F5F0            232             mov     b, a    ; temporary
+                     233     
+                     234             ; Preset 32-bit mask with 0s
+0014 E4              235             clr     a
+0015 FF              236             mov     r7, a
+0016 FE              237             mov     r6, a
+0017 FD              238             mov     r5, a
+0018 FC              239             mov     r4, a
+                     240     
+0019 E5F0            241             mov     a, b
+001B 900000   F      242             mov     dptr, #bit_table
+                     243     
+                     244             ; If bit in range 0-7
+001E B40800          245             cjne    a, #8, l1_1
+0021 5003            246     l1_1:   jnc     l1_2
+                     247             ; bit_no < 8
+0023 93              248             movc    a, @a + dptr
+0024 FF              249             mov     r7, a
+0025 22              250             ret
+                     251     
+                     252             ; If bit in range 8-15
+0026 9408            253     l1_2:   subb    a, #8
+0028 B40800          254             cjne    a, #8, l1_3
+002B 5003            255     l1_3:   jnc     l1_4
+                     256             ; 8 <= bit_no < 16
+002D 93              257             movc    a, @a + dptr
+002E FE              258             mov     r6, a
+002F 22              259             ret
+                     260     
+                     261             ; If bit in range 16-23
+0030 9408            262     l1_4:   subb    a, #8
+0032 B40800          263             cjne    a, #8, l1_5
+0035 5003            264     l1_5:   jnc     l1_6
+                     265             ; 16 <= bit_no < 24
+0037 93              266             movc    a, @a + dptr
+0038 FD              267             mov     r5, a
+0039 22              268             ret
+                     269     
+                     270             ; If bit in range 24-31
+003A 9408            271     l1_6:   subb    a, #8
+003C 93              272             movc    a, @a + dptr
+003D FC              273             mov     r4, a
+003E 22              274             ret
+                     275     ;* ************************************************************************ */
+                     276     ; ushort bit_mask_16 (uchar bit_no) small;
+003F                 277     _bit_mask_16:
+                     278     ;* ------------------------------------------------------------------------ --
+                     279     ;* Purpose     : Build a 16-bit mask with ONE bit set according to specified
+                     280     ;*               bit number.
+                     281     ;* Remarks     : r7 holds bit number.
+                     282     ;* Restrictions:
+                     283     ;* See also    :
+                     284     ;* Example     :
+                     285     ; * ************************************************************************ */
+                     286     
+003F E4              287             clr     a
+0040 FE              288             mov     r6, a
+0041 CF              289             xch     a, r7
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     4
+
+0042 900000   F      290             mov     dptr, #bit_table
+                     291     
+                     292             ; If bit in range 0-7
+0045 B40800          293             cjne    a, #8, l2_1
+0048 5003            294     l2_1:   jnc     l2_2
+                     295             ; bit_no < 8
+004A 93              296             movc    a, @a + dptr
+004B FF              297             mov     r7, a
+004C 22              298             ret
+                     299     
+                     300             ; If bit in range 8-15
+004D 9408            301     l2_2:   subb    a, #8
+004F 93              302             movc    a, @a + dptr
+0050 FE              303             mov     r6, a
+0051 22              304             ret
+                     305     
+                     306     ;* ************************************************************************ */
+                     307     ; uchar bit_mask_8 (uchar bit_no) small;
+0052                 308     _bit_mask_8:
+                     309     ;* ------------------------------------------------------------------------ --
+                     310     ;* Purpose     : Build a 8-bit mask with ONE bit set according to specified
+                     311     ;*               bit number.
+                     312     ;* Remarks     : r7 holds bit number.
+                     313     ;* Restrictions:
+                     314     ;* See also    :
+                     315     ;* Example     :
+                     316     ; * ************************************************************************ */
+                     317     
+0052 EF              318             mov     a, r7
+0053 900000   F      319             mov     dptr, #bit_table
+0056 93              320             movc    a, @a + dptr
+0057 FF              321             mov     r7, a
+0058 22              322             ret
+                     323     
+                     324     ;* ************************************************************************ */
+                     325     ; void write_bit_8 (uchar bit_no, uchar value, uchar *dst_ptr) small;
+0059                 326     _write_bit_8:
+                     327     ;* ------------------------------------------------------------------------ --
+                     328     ;* Purpose     : Set specified bit to specified value in byte pointed to by
+                     329     ;*               dst_ptr.
+                     330     ;* Remarks     : r7 holds bit number, r5 holds value (0 or 1), 
+                     331     ;*               r1-r3 holds destination pointer.
+                     332     ;* Restrictions:
+                     333     ;* See also    :
+                     334     ;* Example     :
+                     335     ; * ************************************************************************ */
+                     336     
+                     337             ;* Convert bit number to bit mask and complement bit mask
+                     338             ;*----------------------------------------------------------------
+0059 900000   F      339             mov     dptr, #bit_table
+005C EF              340             mov     a, r7
+005D 93              341             movc    a, @a + dptr
+005E FF              342             mov     r7, a
+005F F4              343             cpl     a
+0060 FE              344             mov     r6, a
+                     345     
+                     346             ;* Check if external or internal ram
+                     347             ;*----------------------------------------------------------------
+0061 BB010E          348             cjne    r3, #1, l3_3
+                     349     
+                     350             ;* External Ram
+                     351             ;*----------------------------------------------------------------
+0064 8982            352             mov     dpl, r1
+0066 8A83            353             mov     dph, r2
+0068 E0              354             movx    a, @dptr        ; Read byte from external ram
+0069 5E              355             anl     a, r6           ; Reset bit
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     5
+
+006A BD0002          356             cjne    r5, #0, l3_1    ; Check if bit is to be set
+006D 8001            357             jmp     l3_2            ; Skip setting bit
+006F 4F              358     l3_1:   orl     a, r7           ; Set bit
+0070 F0              359     l3_2:   movx    @dptr, a        ; Update byte in external ram
+0071 22              360             ret
+                     361     
+                     362             ;* Skip update if neither external nor internal ram
+                     363             ;*----------------------------------------------------------------
+0072 BB000B          364     l3_3:   cjne    r3, #0, l3_6
+                     365     
+                     366             ;* Internal Ram
+                     367             ;*----------------------------------------------------------------
+0075 E9              368             mov     a, r1
+0076 F8              369             mov     r0, a
+0077 E6              370             mov     a, @r0          ; Read byte from internal ram
+0078 5E              371             anl     a, r6           ; Reset bit
+0079 BD0002          372             cjne    r5, #0, l3_4    ; Check if bit is to be set
+007C 8001            373             jmp     l3_5            ; Skip setting bit
+007E 4F              374     l3_4:   orl     a, r7           ; Set bit
+007F F6              375     l3_5:   mov     @r0, a          ; Update byte in internal ram
+0080 22              376     l3_6:   ret
+                     377     
+                     378     ;* ************************************************************************ */
+                     379     ; void write_bit_16 (uchar bit_no, uchar value, ushort *dst_ptr) small;
+0081                 380     _write_bit_16:
+                     381     ;* ------------------------------------------------------------------------ --
+                     382     ;* Purpose     : Set specified bit to specified value in ushort pointed to by
+                     383     ;*               dst_ptr.
+                     384     ;* Remarks     : r7 holds bit number, r5 holds value (0 or 1), 
+                     385     ;*               r1-r3 holds destination pointer.
+                     386     ;* Restrictions:
+                     387     ;* See also    :
+                     388     ;* Example     :
+                     389     ; * ************************************************************************ */
+                     390     
+                     391             ;* Check if bit number is < 8, i.e. bit is located in second byte.
+                     392             ;*----------------------------------------------------------------
+0081 BF0800          393             cjne    r7, #8, l5_1
+0084 5007            394     l5_1:   jnc     l5_2
+                     395     
+                     396             ;* Bit is located in second byte, adjust destination pointer in
+                     397             ;* order to use function _write_bit_8
+                     398             ;*----------------------------------------------------------------
+0086 09              399             inc     r1
+0087 E9              400             mov     a, r1
+0088 7007            401             jnz     l5_3
+008A 0A              402             inc     r2
+008B 8004            403             jmp     l5_3
+                     404     
+                     405             ;* Bit is located in first byte, adjust bit number in ordet to use
+                     406             ;* function _write_bit_8
+                     407             ;*----------------------------------------------------------------
+008D 7407            408     l5_2:   mov     a, #7
+008F 5F              409             anl     a, r7
+0090 FF              410             mov     r7, a
+                     411     
+                     412             ;* Update bit in the byte
+                     413             ;*----------------------------------------------------------------
+0091 120000   F      414     l5_3:   lcall   _write_bit_8
+0094 22              415             ret
+                     416     
+                     417     ;* ************************************************************************ */
+                     418     ; void write_bit_32 (uchar bit_no, uchar value, ulong *dst_ptr) small;
+0095                 419     _write_bit_32:
+                     420     ;* ------------------------------------------------------------------------ --
+                     421     ;* Purpose     : Set specified bit to specified value in ulong pointed to by
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     6
+
+                     422     ;*               dst_ptr.
+                     423     ;* Remarks     : r7 holds bit number, r5 holds value (0 or 1), 
+                     424     ;*               r1-r3 holds destination pointer.
+                     425     ;* Restrictions:
+                     426     ;* See also    :
+                     427     ;* Example     :
+                     428     ; * ************************************************************************ */
+                     429     
+                     430             ;* Calc byte offset as (31 - bit_no) / 8
+                     431             ;*----------------------------------------------------------------
+0095 741F            432             mov     a, #31
+0097 C3              433             clr     c
+0098 9F              434             subb    a, r7
+0099 13              435             rrc     a
+009A 13              436             rrc     a
+009B 13              437             rrc     a
+009C 5403            438             anl     a, #3
+                     439     
+                     440             ;* Adjust destination pointer according to byte offset
+                     441             ;*----------------------------------------------------------------
+009E 29              442             add     a, r1
+009F F9              443             mov     r1, a
+00A0 E4              444             clr     a
+00A1 3A              445             addc    a, r2
+00A2 FA              446             mov     r2, a
+                     447     
+                     448             ;* Adjust bit number to be within byte
+                     449             ;*----------------------------------------------------------------
+00A3 7407            450             mov     a, #7
+00A5 5F              451             anl     a, r7
+00A6 FF              452             mov     r7, a
+                     453     
+                     454             ;* Update bit in the byte
+                     455             ;*----------------------------------------------------------------
+00A7 120000   F      456             lcall   _write_bit_8
+00AA 22              457             ret
+                     458     
+                     459     ;* ************************************************************************ */
+                     460     ; bit test_bit_8 (uchar bit_no, uchar *src_ptr) small;
+00AB                 461     _test_bit_8:
+                     462     ;* ------------------------------------------------------------------------ --
+                     463     ;* Purpose     : Test specified bit in byte pointed to by src_ptr.
+                     464     ;* Remarks     : r7 holds bit number, r1-r3 holds source pointer.
+                     465     ;* Restrictions:
+                     466     ;* See also    :
+                     467     ;* Example     :        
+                     468     ; * ************************************************************************ */
+                     469     
+                     470             ;* Convert bit number to bit mask
+                     471             ;*----------------------------------------------------------------
+00AB 900000   F      472             mov     dptr, #bit_table
+00AE EF              473             mov     a, r7
+00AF 93              474             movc    a, @a + dptr
+00B0 FF              475             mov     r7, a
+                     476     
+                     477             ;* Check if external or internal ram
+                     478             ;*----------------------------------------------------------------
+00B1 BB0107          479             cjne    r3, #1, l4_1
+                     480     
+                     481             ;* External Ram
+                     482             ;*----------------------------------------------------------------
+00B4 8982            483             mov     dpl, r1
+00B6 8A83            484             mov     dph, r2
+00B8 E0              485             movx    a, @dptr        ; Read byte from external ram
+00B9 8006            486             jmp     l4_2
+                     487     
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     7
+
+                     488             ;* Skip check if neither external nor internal ram
+                     489             ;*----------------------------------------------------------------
+00BB BB0008          490     l4_1:   cjne    r3, #0, l4_3
+00BE E9              491             mov     a, r1
+00BF F8              492             mov     r0, a
+00C0 E6              493             mov     a, @r0          ; Read byte from internal ram
+                     494     
+                     495             ;* Check bit
+                     496             ;*----------------------------------------------------------------
+00C1 5F              497     l4_2:   anl     a, r7
+00C2 6002            498             jz      l4_3
+00C4 D3              499             setb    c
+00C5 22              500             ret
+                     501             
+00C6 C3              502     l4_3:   clr     c
+00C7 22              503             ret
+                     504     
+                     505     ;* ************************************************************************ */
+                     506     ; bit test_bit_16 (uchar bit_no, ushort *src_ptr) small;
+00C8                 507     _test_bit_16:
+                     508     ;* ------------------------------------------------------------------------ --
+                     509     ;* Purpose     : Test specified bit in ushort pointed to by src_ptr.
+                     510     ;* Remarks     : r7 holds bit number, r1-r3 holds source pointer.
+                     511     ;* Restrictions:
+                     512     ;* See also    :
+                     513     ;* Example     :
+                     514     ; * ************************************************************************ */
+                     515     
+                     516             ;* Check if bit number is < 8, i.e. bit is located in second byte.
+                     517             ;*----------------------------------------------------------------
+00C8 BF0800          518             cjne    r7, #8, l6_1
+00CB 5007            519     l6_1:   jnc     l6_2
+                     520     
+                     521             ;* Bit is located in second byte, adjust destination pointer in
+                     522             ;* order to use function _test_bit_8
+                     523             ;*----------------------------------------------------------------
+00CD 09              524             inc     r1
+00CE E9              525             mov     a, r1
+00CF 7007            526             jnz     l6_3
+00D1 0A              527             inc     r2
+00D2 8004            528             jmp     l6_3
+                     529     
+                     530             ;* Bit is located in first byte, adjust bit number in ordet to use
+                     531             ;* function _test_bit_8
+                     532             ;*----------------------------------------------------------------
+00D4 7407            533     l6_2:   mov     a, #7
+00D6 5F              534             anl     a, r7
+00D7 FF              535             mov     r7, a
+                     536     
+                     537             ;* Check bit in the byte
+                     538             ;*----------------------------------------------------------------
+00D8 120000   F      539     l6_3:   lcall   _test_bit_8
+                     540     
+00DB 22              541             ret
+                     542     
+                     543     ;* ************************************************************************ */
+                     544     ; void test_bit_32 (uchar bit_no, uchar value, ulong *src_ptr) small;
+00DC                 545     _test_bit_32:
+                     546     ;* ------------------------------------------------------------------------ --
+                     547     ;* Purpose     : Test specified bit in ulong pointed to by src_ptr.
+                     548     ;* Remarks     : r7 holds bit number, r1-r3 holds source pointer.
+                     549     ;* Restrictions:
+                     550     ;* See also    :
+                     551     ;* Example     :
+                     552     ; * ************************************************************************ */
+                     553     
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     8
+
+                     554             ;* Calc byte offset as (31 - bit_no) / 8
+                     555             ;*----------------------------------------------------------------
+00DC 741F            556             mov     a, #31
+00DE C3              557             clr     c
+00DF 9F              558             subb    a, r7
+00E0 13              559             rrc     a
+00E1 13              560             rrc     a
+00E2 13              561             rrc     a
+00E3 5403            562             anl     a, #3
+                     563     
+                     564             ;* Adjust destination pointer according to byte offset
+                     565             ;*----------------------------------------------------------------
+00E5 29              566             add     a, r1
+00E6 F9              567             mov     r1, a
+00E7 E4              568             clr     a
+00E8 3A              569             addc    a, r2
+00E9 FA              570             mov     r2, a
+                     571     
+                     572             ;* Adjust bit number to be within byte
+                     573             ;*----------------------------------------------------------------
+00EA 7407            574             mov     a, #7
+00EC 5F              575             anl     a, r7
+00ED FF              576             mov     r7, a
+                     577     
+                     578             ;* Check bit in the byte
+                     579             ;*----------------------------------------------------------------
+00EE 120000   F      580             lcall   _test_bit_8
+                     581     
+00F1 22              582             ret
+                     583     
+                     584             END
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE     9
+
+SYMBOL TABLE LISTING
+------ ----- -------
+
+
+N A M E             T Y P E  V A L U E   ATTRIBUTES
+
+AC . . . . . . . .  B ADDR   00D0H.6 A   
+ACC. . . . . . . .  D ADDR   00E0H   A   
+B. . . . . . . . .  D ADDR   00F0H   A   
+BIT_TABLE. . . . .  C ADDR   0009H   R   SEG=PROG
+CP_RL2 . . . . . .  B ADDR   00C8H.0 A   
+CY . . . . . . . .  B ADDR   00D0H.7 A   
+C_T2 . . . . . . .  B ADDR   00C8H.1 A   
+DPH. . . . . . . .  D ADDR   0083H   A   
+DPL. . . . . . . .  D ADDR   0082H   A   
+EA . . . . . . . .  B ADDR   00A8H.7 A   
+ES . . . . . . . .  B ADDR   00A8H.4 A   
+ET0. . . . . . . .  B ADDR   00A8H.1 A   
+ET1. . . . . . . .  B ADDR   00A8H.3 A   
+ET2. . . . . . . .  B ADDR   00A8H.5 A   
+EX0. . . . . . . .  B ADDR   00A8H.0 A   
+EX1. . . . . . . .  B ADDR   00A8H.2 A   
+EXEN2. . . . . . .  B ADDR   00C8H.3 A   
+EXF2 . . . . . . .  B ADDR   00C8H.6 A   
+F0 . . . . . . . .  B ADDR   00D0H.5 A   
+IE . . . . . . . .  D ADDR   00A8H   A   
+IE0. . . . . . . .  B ADDR   0088H.1 A   
+IE1. . . . . . . .  B ADDR   0088H.3 A   
+INT0 . . . . . . .  B ADDR   00B0H.2 A   
+INT1 . . . . . . .  B ADDR   00B0H.3 A   
+IP . . . . . . . .  D ADDR   00B8H   A   
+IT0. . . . . . . .  B ADDR   0088H.0 A   
+IT1. . . . . . . .  B ADDR   0088H.2 A   
+L1_1 . . . . . . .  C ADDR   0021H   R   SEG=PROG
+L1_2 . . . . . . .  C ADDR   0026H   R   SEG=PROG
+L1_3 . . . . . . .  C ADDR   002BH   R   SEG=PROG
+L1_4 . . . . . . .  C ADDR   0030H   R   SEG=PROG
+L1_5 . . . . . . .  C ADDR   0035H   R   SEG=PROG
+L1_6 . . . . . . .  C ADDR   003AH   R   SEG=PROG
+L2_1 . . . . . . .  C ADDR   0048H   R   SEG=PROG
+L2_2 . . . . . . .  C ADDR   004DH   R   SEG=PROG
+L3_1 . . . . . . .  C ADDR   006FH   R   SEG=PROG
+L3_2 . . . . . . .  C ADDR   0070H   R   SEG=PROG
+L3_3 . . . . . . .  C ADDR   0072H   R   SEG=PROG
+L3_4 . . . . . . .  C ADDR   007EH   R   SEG=PROG
+L3_5 . . . . . . .  C ADDR   007FH   R   SEG=PROG
+L3_6 . . . . . . .  C ADDR   0080H   R   SEG=PROG
+L4_1 . . . . . . .  C ADDR   00BBH   R   SEG=PROG
+L4_2 . . . . . . .  C ADDR   00C1H   R   SEG=PROG
+L4_3 . . . . . . .  C ADDR   00C6H   R   SEG=PROG
+L5_1 . . . . . . .  C ADDR   0084H   R   SEG=PROG
+L5_2 . . . . . . .  C ADDR   008DH   R   SEG=PROG
+L5_3 . . . . . . .  C ADDR   0091H   R   SEG=PROG
+L6_1 . . . . . . .  C ADDR   00CBH   R   SEG=PROG
+L6_2 . . . . . . .  C ADDR   00D4H   R   SEG=PROG
+L6_3 . . . . . . .  C ADDR   00D8H   R   SEG=PROG
+MISCUTIL2. . . . .  N NUMB   -----       
+OV . . . . . . . .  B ADDR   00D0H.2 A   
+P. . . . . . . . .  B ADDR   00D0H.0 A   
+P0 . . . . . . . .  D ADDR   0080H   A   
+P1 . . . . . . . .  D ADDR   0090H   A   
+P2 . . . . . . . .  D ADDR   00A0H   A   
+P3 . . . . . . . .  D ADDR   00B0H   A   
+PCON . . . . . . .  D ADDR   0087H   A   
+PROG . . . . . . .  C SEG    00F2H       REL=UNIT
+PS . . . . . . . .  B ADDR   00B8H.4 A   
+A51 MACRO ASSEMBLER  MISC2                                                                11/30/2021 16:22:26 PAGE    10
+
+PSW. . . . . . . .  D ADDR   00D0H   A   
+PT0. . . . . . . .  B ADDR   00B8H.1 A   
+PT1. . . . . . . .  B ADDR   00B8H.3 A   
+PT2. . . . . . . .  B ADDR   00B8H.5 A   
+PX0. . . . . . . .  B ADDR   00B8H.0 A   
+PX1. . . . . . . .  B ADDR   00B8H.2 A   
+RB8. . . . . . . .  B ADDR   0098H.2 A   
+RCAP2H . . . . . .  D ADDR   00CBH   A   
+RCAP2L . . . . . .  D ADDR   00CAH   A   
+RCLK . . . . . . .  B ADDR   00C8H.5 A   
+RD . . . . . . . .  B ADDR   00B0H.7 A   
+REN. . . . . . . .  B ADDR   0098H.4 A   
+RI . . . . . . . .  B ADDR   0098H.0 A   
+RS0. . . . . . . .  B ADDR   00D0H.3 A   
+RS1. . . . . . . .  B ADDR   00D0H.4 A   
+RXD. . . . . . . .  B ADDR   00B0H.0 A   
+SBUF . . . . . . .  D ADDR   0099H   A   
+SCON . . . . . . .  D ADDR   0098H   A   
+SM0. . . . . . . .  B ADDR   0098H.7 A   
+SM1. . . . . . . .  B ADDR   0098H.6 A   
+SM2. . . . . . . .  B ADDR   0098H.5 A   
+SP . . . . . . . .  D ADDR   0081H   A   
+T0 . . . . . . . .  B ADDR   00B0H.4 A   
+T1 . . . . . . . .  B ADDR   00B0H.5 A   
+T2 . . . . . . . .  B ADDR   0090H.0 A   
+T2CON. . . . . . .  D ADDR   00C8H   A   
+T2EX . . . . . . .  B ADDR   0090H.1 A   
+TB8. . . . . . . .  B ADDR   0098H.3 A   
+TCLK . . . . . . .  B ADDR   00C8H.4 A   
+TCON . . . . . . .  D ADDR   0088H   A   
+TF0. . . . . . . .  B ADDR   0088H.5 A   
+TF1. . . . . . . .  B ADDR   0088H.7 A   
+TF2. . . . . . . .  B ADDR   00C8H.7 A   
+TH0. . . . . . . .  D ADDR   008CH   A   
+TH1. . . . . . . .  D ADDR   008DH   A   
+TH2. . . . . . . .  D ADDR   00CDH   A   
+TI . . . . . . . .  B ADDR   0098H.1 A   
+TL0. . . . . . . .  D ADDR   008AH   A   
+TL1. . . . . . . .  D ADDR   008BH   A   
+TL2. . . . . . . .  D ADDR   00CCH   A   
+TMOD . . . . . . .  D ADDR   0089H   A   
+TR0. . . . . . . .  B ADDR   0088H.4 A   
+TR1. . . . . . . .  B ADDR   0088H.6 A   
+TR2. . . . . . . .  B ADDR   00C8H.2 A   
+TXD. . . . . . . .  B ADDR   00B0H.1 A   
+WR . . . . . . . .  B ADDR   00B0H.6 A   
+_BIT_MASK_16 . . .  C ADDR   003FH   R   SEG=PROG
+_BIT_MASK_32 . . .  C ADDR   0011H   R   SEG=PROG
+_BIT_MASK_8. . . .  C ADDR   0052H   R   SEG=PROG
+_BYTES2USHORT. . .  C ADDR   0000H   R   SEG=PROG
+_HIGH_W. . . . . .  C ADDR   0004H   R   SEG=PROG
+_TEST_BIT_16 . . .  C ADDR   00C8H   R   SEG=PROG
+_TEST_BIT_32 . . .  C ADDR   00DCH   R   SEG=PROG
+_TEST_BIT_8. . . .  C ADDR   00ABH   R   SEG=PROG
+_USHORTS2ULONG . .  C ADDR   0003H   R   SEG=PROG
+_WRITE_BIT_16. . .  C ADDR   0081H   R   SEG=PROG
+_WRITE_BIT_32. . .  C ADDR   0095H   R   SEG=PROG
+_WRITE_BIT_8 . . .  C ADDR   0059H   R   SEG=PROG
+
+
+REGISTER BANK(S) USED: 0 
+
+
+ASSEMBLY COMPLETE.  0 WARNING(S), 0 ERROR(S)
